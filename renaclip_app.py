@@ -53,19 +53,32 @@ GEM_LIST = [
 
 
 def _create_tray_icon_image(size: int = 64):
-    """Create a simple tray icon image (RenaClip 'R' on dark background)."""
+    """Create a simple tray icon image (RenaClip 'R' on dark background). Fallback when no asset."""
     img = Image.new("RGB", (size, size), (40, 44, 52))
     draw = ImageDraw.Draw(img)
-    # Draw a simple "R" shape (rounded rect + diagonal)
     margin = size // 4
     draw.rounded_rectangle((margin, margin, size - margin, size - margin), radius=6, outline=(97, 175, 239), width=3)
-    # Stem of R
     draw.line([(margin + size // 6, margin), (margin + size // 6, size - margin)], fill=(97, 175, 239), width=2)
-    # Top right curve and leg of R (simplified as a line)
     draw.line([(margin + size // 6, margin + size // 3), (size - margin - 2, margin + size // 3)], fill=(97, 175, 239), width=2)
     draw.line([(size - margin - 2, margin + size // 3), (size - margin - 2, size - margin)], fill=(97, 175, 239), width=2)
     draw.line([(margin + size // 6, margin + size // 2), (size - margin - 2, size - margin)], fill=(97, 175, 239), width=2)
     return img
+
+
+def _load_tray_icon(size: int = 64):
+    """Load tray icon from assets/renaclip_icon.png; fallback to drawn icon if missing."""
+    app_dir = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(app_dir, "assets", "renaclip_icon.png")
+    try:
+        if os.path.isfile(path):
+            img = Image.open(path).convert("RGBA")
+            resample = getattr(Image, "Resampling", None)
+            filter_ = resample.LANCZOS if resample else getattr(Image, "LANCZOS", 1)
+            img = img.resize((size, size), filter_)
+            return img
+    except Exception:
+        pass
+    return _create_tray_icon_image(size)
 
 
 def _run_tray_icon(icon):
@@ -268,7 +281,7 @@ async def main_async(arg_gems: list[str] | None):
 
     if PYSTRAY_AVAILABLE and pystray is not None:
         try:
-            tray_image = _create_tray_icon_image(64)
+            tray_image = _load_tray_icon(64)
 
             def on_open_ui(icon, item):
                 _launch_renaclip_ui()

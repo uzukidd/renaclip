@@ -3,6 +3,7 @@
 gem_config.json
 pystray_demo.py
 test_gemini_demo.py
+assets/.temp
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

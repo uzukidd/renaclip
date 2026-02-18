@@ -1,5 +1,7 @@
 # RenaClip
 
+![renaclip_logo](assets/renaclip_logo.png)
+
 **R**eal-time **E**nhanced **N**eural **A**ssistant for **Clip**board — use Gemini-powered “gems” to process clipboard text with global hotkeys.
 
 ![Notepad_6MNS1et3W5](README.assets/Notepad_6MNS1et3W5.gif)
