@@ -5,3 +5,6 @@ gemini-webapi>=1.18.0
 browser-cookie3>=0.19.0
 # Optional: required when using SOCKS5 proxy (e.g. socks5://127.0.0.1:8889)
 httpx[socks]>=0.27.0
+# For gemini_clipboard_app.py: clipboard + global hotkey Ctrl+1
+pyperclip>=1.8.0
+keyboard>=0.13.0
