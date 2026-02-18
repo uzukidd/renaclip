@@ -12,9 +12,16 @@ DEFAULT_SETTINGS = {
     "GEMINI_1PSIDTS": "",
     "SOCKS5_PROXY": "",
     "HOTKEY_MODIFIER": "ctrl",
+    "MODEL": "unspecified",
 }
 
 VALID_MODIFIERS = ("ctrl", "ctrl+shift", "ctrl+alt", "ctrl+shift+alt")
+AVAILABLE_MODELS = (
+    "unspecified",
+    "gemini-3.0-pro",
+    "gemini-3.0-flash",
+    "gemini-3.0-flash-thinking",
+)
 
 
 def load_config() -> tuple[list[dict], dict]:

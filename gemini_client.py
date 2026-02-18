@@ -14,7 +14,7 @@ import sys
 DEFAULT_PROXY = "socks5://127.0.0.1:8889"
 
 
-def get_client():
+def get_client(psid=None, psidts=None):
     """Build GeminiClient from env cookies or browser (browser-cookie3)."""
     from gemini_webapi import GeminiClient
 
@@ -24,8 +24,10 @@ def get_client():
     else:
         proxy = env_proxy.strip() or None
 
-    psid = (os.environ.get("GEMINI_1PSID") or "").strip()
-    psidts = (os.environ.get("GEMINI_1PSIDTS") or "").strip()
+    if psid is None:
+        psid = (os.environ.get("GEMINI_1PSID") or "").strip()
+    if psidts is None:
+        psidts = (os.environ.get("GEMINI_1PSIDTS") or "").strip()
 
     if psid:
         has_psidts = "yes" if psidts else "no"

@@ -12,15 +12,26 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = SCRIPT_DIR / "gem_config.json"
 VALID_MODIFIERS = ("ctrl", "ctrl+shift", "ctrl+alt", "ctrl+shift+alt")
+AVAILABLE_MODELS = (
+    "unspecified",
+    "gemini-3.0-pro",
+    "gemini-3.0-flash",
+    "gemini-3.0-flash-thinking",
+)
 DEFAULT_GEMS = [
-    {"name": "English to Chinese Translator", "description": "Translates English text to Chinese (Simplified).", "prompt": "You are a professional translator. Reply with only the Chinese translation."},
+    {
+      "name": "Chinese to English Translator",
+      "description": "Translates Chinese text to English.",
+      "prompt": "You are a professional translator. Reply with only the English translation."
+    },
 ]
-DEFAULT_SETTINGS = {"GEMINI_1PSID": "", "GEMINI_1PSIDTS": "", "SOCKS5_PROXY": "", "HOTKEY_MODIFIER": "ctrl"}
+DEFAULT_SETTINGS = {"GEMINI_1PSID": "", "GEMINI_1PSIDTS": "", "SOCKS5_PROXY": "", "HOTKEY_MODIFIER": "ctrl", "MODEL": "unspecified"}
 
 
 # ---------------------------------------------------------------------------
@@ -57,11 +68,39 @@ def _run_service(arg_gems: list[str] | None) -> None:
     """
     import pyperclip
     from gemini_client import GemNotFoundError, _delete_chat_after, ensure_gem_exists, get_client, get_or_create_gem
+    
+    # Windows toast notification support
+    try:
+        from win10toast import ToastNotifier
+        _notifier = ToastNotifier()
+    except ImportError:
+        _notifier = None
+    
+    def show_notification(title: str, message: str) -> None:
+        """Show a Windows toast notification if notifier is available."""
+        if _notifier is None:
+            return
+        try:
+            # win10toast has a known bug with threaded=True causing WNDPROC errors
+            # Use threaded=False to avoid the issue, or catch the specific error
+            _notifier.show_toast(title, message, duration=5, threaded=False)
+        except (TypeError, ValueError) as e:
+            # Catch WNDPROC/WPARAM errors which are harmless but noisy
+            if "WPARAM" in str(e) or "WNDPROC" in str(e) or "LRESULT" in str(e):
+                pass  # Silently ignore this known win10toast bug
+            else:
+                print(f"[Notification error] {e}", file=sys.stderr, flush=True)
+        except Exception as e:
+            print(f"[Notification error] {e}", file=sys.stderr, flush=True)
 
     gems_data, settings = load_config()
     mod = (settings.get("HOTKEY_MODIFIER") or "ctrl").strip().lower()
     if mod not in VALID_MODIFIERS:
         mod = "ctrl"
+    
+    model = (settings.get("MODEL") or "unspecified").strip()
+    if model not in AVAILABLE_MODELS:
+        model = "unspecified"
 
     specs = [{"name": s.strip() for s in arg_gems}] if arg_gems else gems_data
     if not specs:
@@ -85,6 +124,9 @@ def _run_service(arg_gems: list[str] | None) -> None:
                     raise SystemExit(1) from e
                 print(f"  {mod}+{i + 1}: {g.name!r}", flush=True)
             gems.append(g)
+        
+        if model != "unspecified":
+            print(f"Using model: {model}", flush=True)
 
         try:
             import keyboard
@@ -98,14 +140,17 @@ def _run_service(arg_gems: list[str] | None) -> None:
         async def process_clip(g, text: str):
             if not text or not text.strip():
                 return
-            chat = client.start_chat(gem=g)
+            chat = client.start_chat(gem=g, model=model)
             try:
                 resp = await chat.send_message(text)
                 pyperclip.copy((resp.text or "").strip())
                 print("[Clipboard] Updated.", flush=True)
+                gem_name = getattr(g, "name", None) or "(unknown gem)"
+                show_notification("RenaClip", f"Clipboard updated by {gem_name}.")
             except Exception as e:
                 pyperclip.copy(f"[Error] {e}")
                 print(e, file=sys.stderr, flush=True)
+                show_notification("RenaClip", "Gemini clipboard processing failed. See console for details.")
             finally:
                 await _delete_chat_after(client, chat)
 
@@ -115,7 +160,12 @@ def _run_service(arg_gems: list[str] | None) -> None:
             except Exception as ex:
                 print(f"[Clipboard read error] {ex}", file=sys.stderr)
                 return
+            print(
+                f"[Hotkey {i + 1}] Triggered. Clipboard length={len(t.strip())}",
+                flush=True,
+            )
             if not t.strip():
+                print(f"[Hotkey {i + 1}] Clipboard is empty, skipped.", flush=True)
                 return
             asyncio.run_coroutine_threadsafe(process_clip(g, t), loop)
 
@@ -123,9 +173,50 @@ def _run_service(arg_gems: list[str] | None) -> None:
             keyboard.add_hotkey(f"{mod}+{i + 1}", lambda g=g, i=i: on_key(g, i))
         keyboard.add_hotkey(f"{mod}+q", lambda: loop.call_soon_threadsafe(stop_ev.set))
         print(f"Listening: {mod}+1..{mod}+{len(gems)}, {mod}+q = exit.", flush=True)
+
+        tray_icon = None
+
+        def _tray_open_ui(icon, item):
+            try:
+                subprocess.Popen(
+                    [sys.executable, str(Path(__file__).resolve())],
+                    cwd=SCRIPT_DIR,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0,
+                )
+            except Exception:
+                pass
+
+        def _tray_exit(icon, item):
+            loop.call_soon_threadsafe(stop_ev.set)
+            icon.stop()
+
+        try:
+            import pystray
+            from PIL import Image
+            size = 64
+            img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+            from PIL import ImageDraw
+            d = ImageDraw.Draw(img)
+            d.ellipse([4, 4, size - 4, size - 4], fill=(76, 175, 80), outline=(56, 142, 60))
+            d.ellipse([size // 2 - 4, size // 2 - 4, size // 2 + 4, size // 2 + 4], fill=(255, 255, 255))
+            menu = pystray.Menu(
+                pystray.MenuItem("Open UI", _tray_open_ui, default=True),
+                pystray.MenuItem("Exit", _tray_exit),
+            )
+            tray_icon = pystray.Icon("rena_clip", img, "Rena Clip (running)", menu)
+            tray_thread = threading.Thread(target=tray_icon.run, daemon=True)
+            tray_thread.start()
+        except ImportError:
+            pass
+
         try:
             await stop_ev.wait()
         finally:
+            if tray_icon is not None:
+                try:
+                    tray_icon.stop()
+                except Exception:
+                    pass
             keyboard.unhook_all()
             await client.close()
 
@@ -340,6 +431,7 @@ def _ui_main(page):
         pt = ft.TextField(label="GEMINI_1PSIDTS", value=settings.get("GEMINI_1PSIDTS", ""), width=450, password=True, can_reveal_password=True)
         px = ft.TextField(label="Proxy (SOCKS5_PROXY)", value=settings.get("SOCKS5_PROXY", ""), width=450, hint_text="e.g. socks5://127.0.0.1:8889")
         dd = ft.Dropdown(label="Hotkey modifier", value=settings.get("HOTKEY_MODIFIER", "ctrl"), width=450, options=[ft.dropdown.Option(m) for m in VALID_MODIFIERS])
+        model_dd = ft.Dropdown(label="Model", value=settings.get("MODEL", "unspecified"), width=450, options=[ft.dropdown.Option(m) for m in AVAILABLE_MODELS])
 
         def close():
             page.pop_dialog()
@@ -350,6 +442,8 @@ def _ui_main(page):
             settings["SOCKS5_PROXY"] = (px.value or "").strip()
             m = (dd.value or "ctrl").strip().lower()
             settings["HOTKEY_MODIFIER"] = m if m in VALID_MODIFIERS else "ctrl"
+            model_val = (model_dd.value or "unspecified").strip()
+            settings["MODEL"] = model_val if model_val in AVAILABLE_MODELS else "unspecified"
             save_config(gems, settings)
             close()
 
@@ -357,7 +451,7 @@ def _ui_main(page):
             ft.AlertDialog(
                 title=ft.Text("Settings"),
                 content=ft.Column(
-                    [pf, pt, px, dd, ft.Text("modifier+1/2/3... for gems, modifier+q to exit", size=11, color=ft.Colors.GREY_600), ft.Row([ft.OutlinedButton("Cancel", on_click=lambda e: close()), ft.FilledButton("Save", on_click=save_set)], alignment=ft.MainAxisAlignment.END)],
+                    [pf, pt, px, dd, model_dd, ft.Row([ft.OutlinedButton("Cancel", on_click=lambda e: close()), ft.FilledButton("Save", on_click=save_set)], alignment=ft.MainAxisAlignment.END)],
                     tight=True,
                     spacing=12,
                 ),
@@ -367,17 +461,18 @@ def _ui_main(page):
 
     page.add(
         ft.Row([ft.Text("Rena Clip", size=24, weight=ft.FontWeight.BOLD), ft.Container(expand=True), ft.OutlinedButton("Settings", on_click=open_settings), ft.FilledButton("Add Gem", on_click=lambda e: open_edit(None))], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-        ft.Row(
-            [
-                ft.Text("Clipboard service:", size=14, color=ft.Colors.GREY_700),
-                ft.Text("Stopped", ref=status_ref, size=14, color=ft.Colors.GREY_600),
-                ft.Container(width=12),
-                ft.ElevatedButton("Start", ref=start_btn, on_click=on_start),
-                ft.OutlinedButton("Stop", ref=stop_btn, disabled=True, on_click=on_stop),
-            ],
-            alignment=ft.MainAxisAlignment.START,
-            spacing=8,
-        ),
+        # ft.Row(
+        #     [
+        #         ft.Text("Clipboard service:", size=14, color=ft.Colors.GREY_700),
+        #         ft.Text("Stopped", ref=status_ref, size=14, color=ft.Colors.GREY_600),
+        #         ft.Container(width=12),
+        #         ft.ElevatedButton("Start", ref=start_btn, on_click=on_start),
+        #         ft.OutlinedButton("Stop", ref=stop_btn, disabled=True, on_click=on_stop),
+        #     ],
+        #     alignment=ft.MainAxisAlignment.START,
+        #     spacing=8,
+        # ),
+        ft.Text("Modifying gems or settings requires restarting the program.", size=11),
         ft.Divider(),
         ft.Column(ref=gem_list_ref, spacing=8),
     )
@@ -390,27 +485,40 @@ def _ui_main(page):
 
 def main():
     args = sys.argv[1:]
-    if "--service" in args:
-        # Direct run: inject config as temp env vars
-        _, settings = load_config()
-        for k in ("GEMINI_1PSID", "GEMINI_1PSIDTS", "SOCKS5_PROXY"):
-            v = (settings.get(k) or "").strip()
-            if v:
-                os.environ[k] = v
-        idx = args.index("--service")
-        rest = args[idx + 1 :]
-        gems_args = []
-        i = 0
-        while i < len(rest):
-            if rest[i] == "--gem" and i + 1 < len(rest):
-                gems_args.append(rest[i + 1])
-                i += 2
-            else:
-                i += 1
-        _run_service(gems_args if gems_args else None)
-    else:
-        import flet as ft
-        ft.app(target=_ui_main)
+    # if "--service" in args:
+    #     # Direct run: inject config as temp env vars
+    #     _, settings = load_config()
+    #     for k in ("GEMINI_1PSID", "GEMINI_1PSIDTS", "SOCKS5_PROXY"):
+    #         v = (settings.get(k) or "").strip()
+    #         if v:
+    #             os.environ[k] = v
+    #     idx = args.index("--service")
+    #     rest = args[idx + 1 :]
+    #     gems_args = []
+    #     i = 0
+    #     while i < len(rest):
+    #         if rest[i] == "--gem" and i + 1 < len(rest):
+    #             gems_args.append(rest[i + 1])
+    #             i += 2
+    #         else:
+    #             i += 1
+    #     _run_service(gems_args if gems_args else None)
+    # else:
+    UI_LOCK = SCRIPT_DIR / ".renaclip_ui.lock"
+
+    def _remove_ui_lock():
+        try:
+            UI_LOCK.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    try:
+        UI_LOCK.write_text(str(os.getpid()), encoding="utf-8")
+    except Exception:
+        pass
+    atexit.register(_remove_ui_lock)
+    import flet as ft
+    ft.app(target=_ui_main)
 
 
 if __name__ == "__main__":
