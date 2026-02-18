@@ -8,3 +8,5 @@ httpx[socks]>=0.27.0
 # For gemini_clipboard_app.py: clipboard + global hotkey Ctrl+1
 pyperclip>=1.8.0
 keyboard>=0.13.0
+# For reliable process tree kill on Windows
+psutil>=5.9.0

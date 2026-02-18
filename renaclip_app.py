@@ -1,20 +1,16 @@
 """
-Background clipboard app: Ctrl+1/2/3... send clipboard content to the Nth Gem and put the response back.
-
-- Default: use GEM_LIST at top of script (name, description, prompt 作用); gems are created if missing.
-- Or pass --gem NAME_OR_ID multiple times to use existing gems by name/id; Ctrl+1 = first, Ctrl+2 = second, etc.
-- Conversation is deleted after each use.
-
-Usage:
-  pip install -r requirements-gemini-demo.txt
-  python gemini_clipboard_app.py [--gem NAME_OR_ID ...]
-
-  Examples:
-  python gemini_clipboard_app.py --gem "Translator" --gem "Coder" --gem "Writer"
-  python gemini_clipboard_app.py   # use GEM_LIST (Ctrl+1, Ctrl+2, Ctrl+3, ...)
-
-  Exit: Ctrl+Shift+Q. On Windows, global hotkey may require administrator.
+Deprecated: Use renaclip.py instead.
+  python renaclip.py --service               # Run clipboard service
+  python renaclip.py --service --gem X --gem Y  # With explicit gems
 """
+
+if __name__ == "__main__":
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    sys.argv = [str(Path(__file__).resolve().parent / "renaclip.py"), "--service"] + sys.argv[1:]
+    from renaclip import main
+    main()
 
 import asyncio
 import os
@@ -50,14 +46,21 @@ GEM_LIST = [
 def get_gem_specs(arg_gems: list[str] | None) -> list[dict]:
     """
     Return list of gem specs. Each spec is either:
-    - from GEM_LIST: {"name", "description", "prompt"} -> get_or_create_gem.
     - from --gem: {"name": name_or_id} -> ensure_gem_exists (must exist).
+    - from gem_config.json gems; else GEM_LIST.
     """
     if arg_gems:
         return [{"name": s.strip()} for s in arg_gems if s and s.strip()]
     env = (os.environ.get("GEMINI_CLIPBOARD_GEM") or "").strip()
     if env:
         return [{"name": env}]
+    try:
+        from config_loader import load_config
+        cfg_gems, _ = load_config()
+        if cfg_gems:
+            return cfg_gems
+    except ImportError:
+        pass
     return list(GEM_LIST)
 
 
@@ -87,12 +90,30 @@ def on_hotkey(loop, client, gem, index: int):
         print(f"[Clipboard read error] {e}", file=sys.stderr, flush=True)
         return
     if not text.strip():
-        print(f"[Ctrl+{index + 1}] Clipboard is empty, skipped.", flush=True)
+        print(f"[Hotkey {index + 1}] Clipboard is empty, skipped.", flush=True)
         return
     asyncio.run_coroutine_threadsafe(process_clipboard_with_gem(client, gem, text), loop)
 
 
 async def main_async(arg_gems: list[str] | None):
+    # Apply config (env + hotkey) before get_client
+    try:
+        from config_loader import load_config, VALID_MODIFIERS
+        _, cfg_settings = load_config()
+        for k in ("GEMINI_1PSID", "GEMINI_1PSIDTS", "SOCKS5_PROXY"):
+            v = (cfg_settings.get(k) or "").strip()
+            if v:
+                os.environ[k] = v
+    except ImportError:
+        cfg_settings = {}
+    mod = (cfg_settings.get("HOTKEY_MODIFIER") or "ctrl").strip().lower()
+    try:
+        from config_loader import VALID_MODIFIERS
+        if mod not in VALID_MODIFIERS:
+            mod = "ctrl"
+    except ImportError:
+        mod = "ctrl"
+
     client = get_client()
     await client.init(timeout=30, auto_close=False, close_delay=300, auto_refresh=True)
 
@@ -111,14 +132,14 @@ async def main_async(arg_gems: list[str] | None):
                 prompt=spec["prompt"],
                 description=spec.get("description", ""),
             )
-            print(f"  Ctrl+{i + 1}: {gem.name!r} — {spec.get('description', '') or '(no description)'} (created={created})", flush=True)
+            print(f"  {mod}+{i + 1}: {gem.name!r} — {spec.get('description', '') or '(no description)'} (created={created})", flush=True)
         else:
             try:
                 gem = await ensure_gem_exists(client, name)
             except GemNotFoundError as e:
                 print(f"Error: {e}. Gem {name!r} not found.", file=sys.stderr)
                 raise SystemExit(1) from e
-            print(f"  Ctrl+{i + 1}: {gem.name!r}", flush=True)
+            print(f"  {mod}+{i + 1}: {gem.name!r}", flush=True)
         gems.append(gem)
 
     loop = asyncio.get_running_loop()
@@ -134,10 +155,10 @@ async def main_async(arg_gems: list[str] | None):
         loop.call_soon_threadsafe(stop_event.set)
 
     for i, g in enumerate(gems):
-        key = f"ctrl+{i + 1}"
+        key = f"{mod}+{i + 1}"
         keyboard.add_hotkey(key, lambda g=g, i=i: on_hotkey(loop, client, g, i))
-    keyboard.add_hotkey("ctrl+shift+q", on_exit_hotkey)
-    print("Listening: Ctrl+1..Ctrl+%d = clipboard->gem->clipboard, Ctrl+Shift+Q = exit." % len(gems), flush=True)
+    keyboard.add_hotkey(f"{mod}+q", on_exit_hotkey)
+    print(f"Listening: {mod}+1..{mod}+{len(gems)} = clipboard->gem->clipboard, {mod}+q = exit.", flush=True)
     try:
         await stop_event.wait()
     finally:
