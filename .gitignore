@@ -1,3 +1,9 @@
+# Custom
+.renaclip_ui.lock
+gem_config.json
+pystray_demo.py
+test_gemini_demo.py
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
