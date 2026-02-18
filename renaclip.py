@@ -17,6 +17,7 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = SCRIPT_DIR / "gem_config.json"
+APP_NAME = "RenaClip"  # Window title and Flet app name (taskbar / Alt+Tab)
 VALID_MODIFIERS = ("ctrl", "ctrl+shift", "ctrl+alt", "ctrl+shift+alt")
 AVAILABLE_MODELS = (
     "unspecified",
@@ -194,16 +195,25 @@ def _run_service(arg_gems: list[str] | None) -> None:
             import pystray
             from PIL import Image
             size = 64
-            img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-            from PIL import ImageDraw
-            d = ImageDraw.Draw(img)
-            d.ellipse([4, 4, size - 4, size - 4], fill=(76, 175, 80), outline=(56, 142, 60))
-            d.ellipse([size // 2 - 4, size // 2 - 4, size // 2 + 4, size // 2 + 4], fill=(255, 255, 255))
+            icon_path = SCRIPT_DIR / "assets" / "renaclip_icon.png"
+            if icon_path.is_file():
+                try:
+                    resample = getattr(Image, "Resampling", None)
+                    filter_ = resample.LANCZOS if resample else getattr(Image, "LANCZOS", 1)
+                    img = Image.open(icon_path).convert("RGBA").resize((size, size), filter_)
+                except Exception:
+                    img = Image.new("RGBA", (size, size), (76, 175, 80, 255))
+            else:
+                img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+                from PIL import ImageDraw
+                d = ImageDraw.Draw(img)
+                d.ellipse([4, 4, size - 4, size - 4], fill=(76, 175, 80), outline=(56, 142, 60))
+                d.ellipse([size // 2 - 4, size // 2 - 4, size // 2 + 4, size // 2 + 4], fill=(255, 255, 255))
             menu = pystray.Menu(
                 pystray.MenuItem("Open UI", _tray_open_ui, default=True),
                 pystray.MenuItem("Exit", _tray_exit),
             )
-            tray_icon = pystray.Icon("rena_clip", img, "Rena Clip (running)", menu)
+            tray_icon = pystray.Icon("rena_clip", img, f"{APP_NAME} (running)", menu)
             tray_thread = threading.Thread(target=tray_icon.run, daemon=True)
             tray_thread.start()
         except ImportError:
@@ -290,7 +300,15 @@ def is_service_running(proc: subprocess.Popen | None) -> bool:
 def _ui_main(page):
     import flet as ft
 
-    page.title = "Rena Clip"
+    page.title = APP_NAME
+    icon_path = SCRIPT_DIR / "assets" / "renaclip_icon.ico"
+    if not icon_path.is_file():
+        icon_path = SCRIPT_DIR / "assets" / "renaclip_icon.png"
+    if icon_path.is_file():
+        try:
+            page.window.icon = str(icon_path.resolve())
+        except Exception:
+            pass
     page.padding = 24
     page.spacing = 16
     gems, settings = load_config()
@@ -460,7 +478,7 @@ def _ui_main(page):
         )
 
     page.add(
-        ft.Row([ft.Text("Rena Clip", size=24, weight=ft.FontWeight.BOLD), ft.Container(expand=True), ft.OutlinedButton("Settings", on_click=open_settings), ft.FilledButton("Add Gem", on_click=lambda e: open_edit(None))], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+        ft.Row([ft.Text(APP_NAME, size=24, weight=ft.FontWeight.BOLD), ft.Container(expand=True), ft.OutlinedButton("Settings", on_click=open_settings), ft.FilledButton("Add Gem", on_click=lambda e: open_edit(None))], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
         # ft.Row(
         #     [
         #         ft.Text("Clipboard service:", size=14, color=ft.Colors.GREY_700),
@@ -518,7 +536,7 @@ def main():
         pass
     atexit.register(_remove_ui_lock)
     import flet as ft
-    ft.app(target=_ui_main)
+    ft.app(target=_ui_main, name=APP_NAME)
 
 
 if __name__ == "__main__":
