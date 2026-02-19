@@ -138,7 +138,7 @@ def _ui_main(page):
     page.padding = 24
     page.spacing = 16
     gems, settings = load_config()
-    gem_list_ref = ft.Ref[ft.Column]()
+    gem_list_ref = ft.Ref[ft.ReorderableListView]()
     clip_proc_ref = ft.Ref[object]()
 
     def update_status():
@@ -196,6 +196,15 @@ def _ui_main(page):
             stop_service(p)
     atexit.register(cleanup)
 
+    def on_reorder(e):
+        old_idx = e.old_index
+        new_idx = e.new_index
+        if 0 <= old_idx < len(gems) and 0 <= new_idx < len(gems):
+            item = gems.pop(old_idx)
+            gems.insert(new_idx, item)
+            save_config(gems, settings)
+            rebuild_gems()
+
     def rebuild_gems():
         col = gem_list_ref.current
         if not col:
@@ -218,11 +227,20 @@ def _ui_main(page):
                 def mk_del(j):
                     return lambda e: (gems.pop(j), save_config(gems, settings), rebuild_gems())
 
+                gem_key = f"gem_{i}_{g.get('name', 'Unnamed')}"
                 col.controls.append(
                     ft.Card(
+                        key=gem_key,
                         content=ft.Container(
                             content=ft.Row(
                                 [
+                                    # ft.Container(
+                                    #     content=ft.Row([
+                                    #         ft.Container(width=2, height=16, bgcolor=ft.Colors.GREY_400, border_radius=1),
+                                    #         ft.Container(width=2, height=16, bgcolor=ft.Colors.GREY_400, border_radius=1),
+                                    #     ], spacing=2),
+                                    #     padding=ft.padding.only(right=4),
+                                    # ),
                                     ft.Column(
                                         [
                                             ft.Row(
@@ -243,9 +261,11 @@ def _ui_main(page):
                                         expand=True,
                                         alignment=ft.MainAxisAlignment.START,
                                     ),
-                                    ft.Row([ft.OutlinedButton("Edit", on_click=mk_edit(idx)), ft.OutlinedButton("Delete", on_click=mk_del(idx))]),
+                                    ft.Row([ft.OutlinedButton("Edit", on_click=mk_edit(idx)), ft.OutlinedButton("Delete", on_click=mk_del(idx))], spacing=8),
+                                    ft.Container(width=24),  # Space for drag handle
                                 ],
                                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                                spacing=12,
                             ),
                             padding=16,
                             on_click=mk_edit(idx),
@@ -333,10 +353,10 @@ def _ui_main(page):
         #     alignment=ft.MainAxisAlignment.START,
         #     spacing=8,
         # ),
-        ft.Text("Restart the program to apply gems and settings.", size=11),
+        ft.Text("Restart to apply gems and settings.", size=11),
         ft.Divider(),
         ft.Container(
-            content=ft.Column(ref=gem_list_ref, spacing=8, scroll=ft.ScrollMode.AUTO, expand=True),
+            content=ft.ReorderableListView(ref=gem_list_ref, on_reorder=on_reorder, spacing=8, expand=True),
             expand=True,
         ),
     )
