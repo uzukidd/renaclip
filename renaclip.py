@@ -59,66 +59,6 @@ def save_config(gems: list[dict], settings: dict) -> None:
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump({"gems": gems, "settings": settings}, f, ensure_ascii=False, indent=2)
 
-def start_service(extra_args: list[str] | None = None) -> subprocess.Popen | None:
-    """Spawn service as subprocess. Injects config as temp env vars. Runs without console for reliable kill."""
-    args = [sys.executable, str(__file__), "--service"]
-    if extra_args:
-        args.extend(extra_args)
-    _, settings = load_config()
-    env = dict(os.environ)
-    for k in ("GEMINI_1PSID", "GEMINI_1PSIDTS", "SOCKS5_PROXY"):
-        v = (settings.get(k) or "").strip()
-        if v:
-            env[k] = v
-    creationflags = 0
-    if sys.platform == "win32":
-        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    try:
-        return subprocess.Popen(
-            args,
-            cwd=SCRIPT_DIR,
-            env=env,
-            creationflags=creationflags,
-        )
-    except Exception:
-        return None
-
-
-def stop_service(proc: subprocess.Popen | None) -> bool:
-    if proc is None:
-        return False
-    if proc.poll() is not None:
-        return True
-    try:
-        try:
-            import psutil
-            p = psutil.Process(proc.pid)
-            for c in p.children(recursive=True):
-                try:
-                    c.kill()
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass
-            p.kill()
-            p.wait(timeout=5)
-        except ImportError:
-            if sys.platform == "win32":
-                subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, timeout=5)
-            else:
-                proc.terminate()
-                proc.wait(timeout=5)
-    except Exception:
-        try:
-            proc.kill()
-            proc.wait(timeout=3)
-        except Exception:
-            pass
-    return True
-
-
-def is_service_running(proc: subprocess.Popen | None) -> bool:
-    return proc is not None and proc.poll() is None
-
-
 # ---------------------------------------------------------------------------
 # UI (Flet)
 # ---------------------------------------------------------------------------
@@ -141,60 +81,14 @@ def _ui_main(page):
     gem_list_ref = ft.Ref[ft.ReorderableListView]()
     clip_proc_ref = ft.Ref[object]()
 
-    def update_status():
-        st, sb, eb = status_ref.current, start_btn.current, stop_btn.current
-        running = is_service_running(clip_proc_ref.current)
-        try:
-            page.window.progress_bar = 1.0 if running else None
-            page.window.badge_label = "●" if running else None
-        except Exception:
-            pass
-        if st:
-            st.value = "Running" if running else "Stopped"
-            st.color = ft.Colors.GREEN if running else ft.Colors.GREY_600
-        if sb:
-            sb.disabled = running
-        if eb:
-            eb.disabled = not running
-        try:
-            if st:
-                st.update()
-            if sb:
-                sb.update()
-            if eb:
-                eb.update()
-            page.update()
-        except Exception:
-            pass
-
-    def on_start(e):
-        if not gems:
-            page.snack_bar = ft.SnackBar(content=ft.Text("Add at least one gem first."))
-            page.snack_bar.open = True
-            page.update()
-            return
-        p = start_service()
-        clip_proc_ref.current = p
-        if p is None:
-            page.snack_bar = ft.SnackBar(content=ft.Text("Failed to start service."))
-            page.snack_bar.open = True
-        page.update()
-        update_status()
-
-    def on_stop(e):
-        stop_service(clip_proc_ref.current)
-        clip_proc_ref.current = None
-        update_status()
-
-    status_ref = ft.Ref[ft.Text]()
-    start_btn = ft.Ref[ft.ElevatedButton]()
-    stop_btn = ft.Ref[ft.ElevatedButton]()
-
-    def cleanup():
-        p = clip_proc_ref.current
-        if p is not None:
-            stop_service(p)
-    atexit.register(cleanup)
+    def on_reorder(e):
+        old_idx = e.old_index
+        new_idx = e.new_index
+        if 0 <= old_idx < len(gems) and 0 <= new_idx < len(gems):
+            item = gems.pop(old_idx)
+            gems.insert(new_idx, item)
+            save_config(gems, settings)
+            rebuild_gems()
 
     def on_reorder(e):
         old_idx = e.old_index
@@ -332,7 +226,7 @@ def _ui_main(page):
             ft.AlertDialog(
                 title=ft.Text("Settings"),
                 content=ft.Column(
-                    [pf, pt, px, dd, model_dd, ft.Row([ft.OutlinedButton("Cancel", on_click=lambda e: close()), ft.FilledButton("Save", on_click=save_set)], alignment=ft.MainAxisAlignment.END)],
+                    [ft.Text("Set GEMINI_1PSID to 'auto' to trigger browser login (may not work every time).", size=11, color=ft.Colors.GREY_600), pf, pt, px, dd, model_dd, ft.Row([ft.OutlinedButton("Cancel", on_click=lambda e: close()), ft.FilledButton("Save", on_click=save_set)], alignment=ft.MainAxisAlignment.END)],
                     tight=True,
                     spacing=12,
                 ),
@@ -342,17 +236,7 @@ def _ui_main(page):
 
     page.add(
         ft.Row([ft.Text(APP_NAME, size=24, weight=ft.FontWeight.BOLD), ft.Container(expand=True), ft.OutlinedButton("Settings", on_click=open_settings), ft.FilledButton("Add Gem", on_click=lambda e: open_edit(None))], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-        # ft.Row(
-        #     [
-        #         ft.Text("Clipboard service:", size=14, color=ft.Colors.GREY_700),
-        #         ft.Text("Stopped", ref=status_ref, size=14, color=ft.Colors.GREY_600),
-        #         ft.Container(width=12),
-        #         ft.ElevatedButton("Start", ref=start_btn, on_click=on_start),
-        #         ft.OutlinedButton("Stop", ref=stop_btn, disabled=True, on_click=on_stop),
-        #     ],
-        #     alignment=ft.MainAxisAlignment.START,
-        #     spacing=8,
-        # ),
+
         ft.Text("Restart to apply gems and settings.", size=11),
         ft.Divider(),
         ft.Container(

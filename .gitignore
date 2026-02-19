@@ -3,6 +3,8 @@
 gem_config.json
 pystray_demo.py
 test_gemini_demo.py
+.chrome_user_data
+.edge_user_data
 assets/.temp
 
 # Byte-compiled / optimized / DLL files
