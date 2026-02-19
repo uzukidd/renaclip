@@ -132,7 +132,7 @@ def get_cookies_from_browser():
                     psidts = cookie["value"]
             
             # If both cookies are found, return them
-            if psid:
+            if psid and psidts:
                 print(
                     f"\nSuccessfully retrieved cookies: __Secure-1PSID=***, "
                     f"__Secure-1PSIDTS={'***' if psidts else 'not found'}",
