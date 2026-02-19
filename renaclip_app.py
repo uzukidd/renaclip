@@ -202,7 +202,8 @@ async def main_async(arg_gems: list[str] | None):
     try:
         from config_loader import load_config, VALID_MODIFIERS, AVAILABLE_MODELS
         _, cfg_settings = load_config()
-        for k in ("GEMINI_1PSID", "GEMINI_1PSIDTS", "SOCKS5_PROXY"):
+        # Apply relevant settings to environment
+        for k in ("GEMINI_1PSID", "GEMINI_1PSIDTS", "SOCKS5_PROXY", "COOKIE_BROWSER"):
             v = (cfg_settings.get(k) or "").strip()
             if v:
                 os.environ[k] = v
