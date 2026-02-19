@@ -23,7 +23,7 @@ from selenium.webdriver.support import expected_conditions as EC
 DEFAULT_PROXY = None
 
 
-def get_cookies_from_browser():
+def get_cookies_from_browser(browser: str = "edge"):
     """
     Launch browser with visible window (Edge or Chrome), open https://gemini.google.com,
     and wait for user to log in. Checks cookies every 3 seconds for
@@ -42,7 +42,6 @@ def get_cookies_from_browser():
     driver = None
     try:
         # Decide which browser to use
-        browser = (os.environ.get("COOKIE_BROWSER") or "edge").strip().lower()
         if browser not in {"edge", "chrome"}:
             browser = "edge"
 
@@ -177,38 +176,27 @@ def get_cookies_from_browser():
                 pass
 
 
-def get_client(psid=None, psidts=None):
+def get_client(psid=None, psidts=None, proxy=None, cookie_browser=None):
     """Build GeminiClient from env cookies or browser (browser-cookie3)."""
     from gemini_webapi import GeminiClient
-
-    # Only use proxy if SOCKS5_PROXY env is explicitly set
-    env_proxy = os.environ.get("SOCKS5_PROXY")
-    if env_proxy is None:
-        proxy = DEFAULT_PROXY  # None by default - no proxy
-    else:
-        proxy = env_proxy.strip() or None  # Empty string becomes None
     
     if proxy:
         print(f"Using proxy: {proxy}", flush=True)
-
-    if psid is None:
-        psid = (os.environ.get("GEMINI_1PSID") or "").strip()
-    if psidts is None:
-        psidts = (os.environ.get("GEMINI_1PSIDTS") or "").strip()
+        proxy = proxy.strip() or None
 
     if psid:
         has_psidts = "yes" if psidts else "no"
-        print(f"Using env cookies: GEMINI_1PSID=***, GEMINI_1PSIDTS={has_psidts}", flush=True)
-        print(f"psid: {psid}")
+        print(f"Using cookies: GEMINI_1PSID=***, GEMINI_1PSIDTS={has_psidts}", flush=True)
         if psid == "auto":
             # Use selenium to launch Edge browser and get cookies
             try:
-                psid, psidts = get_cookies_from_browser()
+                psid, psidts = get_cookies_from_browser(cookie_browser)
                 if not psid:
                     raise ValueError("Failed to retrieve __Secure-1PSID cookie from browser")
             except RuntimeError as e:
                 # Re-raise RuntimeError (browser window closed by user)
-                raise ValueError(f"Login process interrupted: {e}") from e
+                print(f"Login process interrupted: {e}")
+                return None
             
         return GeminiClient(psid, psidts, proxy=proxy)
     try:
@@ -219,7 +207,7 @@ def get_client(psid=None, psidts=None):
             "or install browser-cookie3 and login at https://gemini.google.com",
             file=sys.stderr,
         )
-        raise SystemExit(1) from e
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -259,25 +247,6 @@ async def run_stream(client, prompt: str = "Count from 1 to 5, one number per li
             if chunk.text_delta:
                 print(chunk.text_delta, end="", flush=True)
         print()
-    finally:
-        await _delete_chat_after(client, chat)
-
-
-async def run_chat(client, prompts: list[str] | None = None):
-    """Multi-turn chat with start_chat / send_message; conversation is deleted after use."""
-    if prompts is None:
-        prompts = [
-            "My name is Demo. Remember it.",
-            "What is my name?",
-        ]
-    print("Multi-turn chat")
-    print("-" * 40)
-    chat = client.start_chat()
-    try:
-        for i, msg in enumerate(prompts, 1):
-            print(f"[User {i}]: {msg}")
-            response = await chat.send_message(msg)
-            print(f"[Gemini]: {response.text}\n")
     finally:
         await _delete_chat_after(client, chat)
 

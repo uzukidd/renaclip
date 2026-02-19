@@ -144,9 +144,6 @@ def get_gem_specs(arg_gems: list[str] | None) -> list[dict]:
     """
     if arg_gems:
         return [{"name": s.strip()} for s in arg_gems if s and s.strip()]
-    env = (os.environ.get("GEMINI_CLIPBOARD_GEM") or "").strip()
-    if env:
-        return [{"name": env}]
 
     from config_loader import load_config
     cfg_gems, _ = load_config()
@@ -157,6 +154,10 @@ def get_gem_specs(arg_gems: list[str] | None) -> list[dict]:
 
 async def process_clipboard_with_gem(client, gem, text: str, model: str = "unspecified") -> None:
     """Send text to gem, put response (or error) back to clipboard, then delete chat."""
+    if client is None:
+        print("[Warning] Client is None, cannot process clipboard with gem.", flush=True)
+        show_notification("RenaClip", "Client is not initialized. Cannot process clipboard.")
+        return
     if not text or not text.strip():
         return
     chat = client.start_chat(gem=gem, model=model)
@@ -173,11 +174,16 @@ async def process_clipboard_with_gem(client, gem, text: str, model: str = "unspe
         print(err_msg, file=sys.stderr, flush=True)
         show_notification("RenaClip", "Gemini clipboard processing failed. See console for details.")
     finally:
-        await _delete_chat_after(client, chat)
+        if client is not None:
+            await _delete_chat_after(client, chat)
 
 
 def on_hotkey(loop, client, gem, index: int, model: str = "unspecified"):
     """Called from keyboard thread: read clipboard and schedule async work on main loop."""
+    if client is None:
+        print("[Warning] Client is None, cannot process hotkey.", flush=True)
+        show_notification("RenaClip", "Client is not initialized. Cannot process hotkey.")
+        return
     gem_name = getattr(gem, "name", None) or "(unknown gem)"
     try:
         text = pyperclip.paste() or ""
@@ -202,15 +208,26 @@ async def main_async(arg_gems: list[str] | None):
     try:
         from config_loader import load_config, VALID_MODIFIERS, AVAILABLE_MODELS
         _, cfg_settings = load_config()
+        
+        GEMINI_1PSID = None
+        GEMINI_1PSIDTS = None
+        SOCKS5_PROXY = None
+        COOKIE_BROWSER = None
+        
         # Apply relevant settings to environment
         for k in ("GEMINI_1PSID", "GEMINI_1PSIDTS", "SOCKS5_PROXY", "COOKIE_BROWSER"):
-            v = (cfg_settings.get(k) or "").strip()
+            v = (cfg_settings.get(k).strip() or None)
             if v:
-                os.environ[k] = v
+                GEMINI_1PSID = v if k == "GEMINI_1PSID" else GEMINI_1PSID
+                GEMINI_1PSIDTS = v if k == "GEMINI_1PSIDTS" else GEMINI_1PSIDTS
+                SOCKS5_PROXY = v if k == "SOCKS5_PROXY" else SOCKS5_PROXY
+                COOKIE_BROWSER = v if k == "COOKIE_BROWSER" else COOKIE_BROWSER
+                
     except ImportError:
         cfg_settings = {}
         VALID_MODIFIERS = ("ctrl", "ctrl+shift", "ctrl+alt", "ctrl+shift+alt")
         AVAILABLE_MODELS = ("unspecified", "gemini-3.0-pro", "gemini-3.0-flash", "gemini-3.0-flash-thinking")
+    
     mod = (cfg_settings.get("HOTKEY_MODIFIER") or "ctrl").strip().lower()
     try:
         from config_loader import VALID_MODIFIERS
@@ -227,8 +244,17 @@ async def main_async(arg_gems: list[str] | None):
     except ImportError:
         model = "unspecified"
 
-    client = get_client()
-    await client.init(timeout=30, auto_close=False, close_delay=300, auto_refresh=True)
+    client = get_client(proxy=SOCKS5_PROXY, psid=GEMINI_1PSID, psidts=GEMINI_1PSIDTS, cookie_browser=COOKIE_BROWSER)
+    if client is None:
+        print("[Error] Failed to initialize Gemini client. Client is None.", file=sys.stderr, flush=True)
+        show_notification("RenaClip", "Failed to initialize Gemini client. Check your configuration.")
+    else:
+        try:
+            await client.init(timeout=30, auto_close=False, close_delay=300, auto_refresh=True)
+        except Exception as e:
+            client = None
+            print(f"[Error] Failed to initialize Gemini client. {e}", file=sys.stderr, flush=True)
+            show_notification("RenaClip", "Failed to initialize Gemini client. Check your configuration.")
 
     specs = get_gem_specs(arg_gems)
     if not specs:
@@ -236,22 +262,37 @@ async def main_async(arg_gems: list[str] | None):
         raise SystemExit(1)
 
     if not arg_gems:
-        config_display_names = [s["name"] for s in specs]
-        await delete_renaclip_gems_not_in_config(client, config_display_names)
+        if client is not None:
+            config_display_names = [s["name"] for s in specs]
+            await delete_renaclip_gems_not_in_config(client, config_display_names)
+        else:
+            print("[Warning] Client is None, skipping delete_renaclip_gems_not_in_config.", flush=True)
     gems: list = []
     for i, spec in enumerate(specs):
+        if client is None:
+            print(f"[Warning] Client is None, cannot process gem {i+1}.", flush=True)
+            continue
         name = spec["name"]
         api_name = (RENACLIP_PREFIX + name) if "prompt" in spec else name
         if "prompt" in spec:
+            if client is None:
+                print(f"[Warning] Client is None, skipping get_or_create_gem for {name}.", flush=True)
+                continue
             gem, created = await get_or_create_gem(
                 client,
                 name=api_name,
                 prompt=spec["prompt"],
                 description=spec.get("description", ""),
             )
-            gem = await update_gem(client, gem, name=api_name, prompt=spec["prompt"], description=spec.get("description", ""))
+            if client is None:
+                print(f"[Warning] Client is None, skipping update_gem for {name}.", flush=True)
+            else:
+                gem = await update_gem(client, gem, name=api_name, prompt=spec["prompt"], description=spec.get("description", ""))
             print(f"  [RenaClip] {mod}+{i + 1}: {name!r} — {spec.get('description', '') or '(no description)'} (created={created})", flush=True)
         else:
+            if client is None:
+                print(f"[Warning] Client is None, skipping ensure_gem_exists for {name}.", flush=True)
+                continue
             try:
                 gem = await ensure_gem_exists(client, api_name)
             except GemNotFoundError as e:
@@ -290,7 +331,7 @@ async def main_async(arg_gems: list[str] | None):
             tray_thread.start()
         except Exception as e:
             print(f"[Tray] Failed to create tray icon: {e}", file=sys.stderr, flush=True)
-
+    
     if model != "unspecified":
         print(f"Using model: {model}", flush=True)
     
@@ -307,7 +348,10 @@ async def main_async(arg_gems: list[str] | None):
             except Exception:
                 pass
         keyboard.unhook_all()
-        await client.close()
+        if client is not None:
+            await client.close()
+        else:
+            print("[Warning] Client is None, skipping client.close().", flush=True)
         print("Exited.", flush=True)
 
 
