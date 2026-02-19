@@ -13,11 +13,14 @@ import threading
 import pyperclip
 
 from gemini_client import (
+    RENACLIP_PREFIX,
     GemNotFoundError,
     _delete_chat_after,
+    delete_renaclip_gems_not_in_config,
     ensure_gem_exists,
     get_client,
     get_or_create_gem,
+    update_gem,
 )
 
 try:
@@ -34,22 +37,6 @@ except ImportError:
     PYSTRAY_AVAILABLE = False
 
 _notifier = ToastNotifier() if ToastNotifier is not None else None
-
-# ---------------------------------------------------------------------------
-# Default gem list: name, description, prompt (作用). Used when no --gem is passed; gems are created if missing.
-# Each item: "name" = display name, "description" = short description, "prompt" = system instruction (作用).
-# ---------------------------------------------------------------------------
-GEM_LIST = [
-    {
-        "name": "Chinese to English Translator",
-        "description": "Translates Chinese text to English.",
-        "prompt": (
-            "You are a professional translator. Your only task is to translate text from English to Chinese. "
-            "Reply with only the Chinese translation, no explanations or extra text. "
-            "Keep the tone and style of the original; use natural, fluent Chinese."
-        ),
-    },
-]
 
 
 def _create_tray_icon_image(size: int = 64):
@@ -160,14 +147,12 @@ def get_gem_specs(arg_gems: list[str] | None) -> list[dict]:
     env = (os.environ.get("GEMINI_CLIPBOARD_GEM") or "").strip()
     if env:
         return [{"name": env}]
-    try:
-        from config_loader import load_config
-        cfg_gems, _ = load_config()
-        if cfg_gems:
-            return cfg_gems
-    except ImportError:
-        pass
-    return list(GEM_LIST)
+
+    from config_loader import load_config
+    cfg_gems, _ = load_config()
+    if cfg_gems:
+        return cfg_gems
+
 
 
 async def process_clipboard_with_gem(client, gem, text: str, model: str = "unspecified") -> None:
@@ -249,20 +234,25 @@ async def main_async(arg_gems: list[str] | None):
         print("Error: at least one gem required (use GEM_LIST or --gem NAME_OR_ID ...).", file=sys.stderr)
         raise SystemExit(1)
 
+    if not arg_gems:
+        config_display_names = [s["name"] for s in specs]
+        await delete_renaclip_gems_not_in_config(client, config_display_names)
     gems: list = []
     for i, spec in enumerate(specs):
         name = spec["name"]
+        api_name = (RENACLIP_PREFIX + name) if "prompt" in spec else name
         if "prompt" in spec:
             gem, created = await get_or_create_gem(
                 client,
-                name=name,
+                name=api_name,
                 prompt=spec["prompt"],
                 description=spec.get("description", ""),
             )
-            print(f"  {mod}+{i + 1}: {gem.name!r} — {spec.get('description', '') or '(no description)'} (created={created})", flush=True)
+            gem = await update_gem(client, gem, name=api_name, prompt=spec["prompt"], description=spec.get("description", ""))
+            print(f"  [RenaClip] {mod}+{i + 1}: {name!r} — {spec.get('description', '') or '(no description)'} (created={created})", flush=True)
         else:
             try:
-                gem = await ensure_gem_exists(client, name)
+                gem = await ensure_gem_exists(client, api_name)
             except GemNotFoundError as e:
                 print(f"Error: {e}. Gem {name!r} not found.", file=sys.stderr)
                 raise SystemExit(1) from e

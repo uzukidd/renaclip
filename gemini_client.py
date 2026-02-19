@@ -108,6 +108,9 @@ async def run_chat(client, prompts: list[str] | None = None):
 # Gem API: create, update, get by id/name, generate with gem (checks existence)
 # ---------------------------------------------------------------------------
 
+# Name prefix for gems created/managed by RenaClip. Display and config use names without this.
+RENACLIP_PREFIX = "[RenaClip]"
+
 
 class GemNotFoundError(Exception):
     """Raised when a gem does not exist (by id or name)."""
@@ -151,7 +154,7 @@ async def ensure_gem_exists(client, gem_identifier: str):
 async def get_or_create_gem(client, name: str, prompt: str, description: str = ""):
     """
     Get a gem by name from cache; if not found, create it with the given name, prompt, description.
-    Returns (gem, created: bool); created is True only when the gem was just created.
+    name: API name (e.g. [RenaClip]DisplayName). Returns (gem, created: bool).
     """
     await fetch_gems_cached(client)
     gem = get_gem_by_id_or_name(client, name)
@@ -163,8 +166,8 @@ async def get_or_create_gem(client, name: str, prompt: str, description: str = "
 
 async def create_gem(client, name: str, prompt: str, description: str = ""):
     """
-    Create a custom gem. Returns the created gem object.
-    Ref: https://github.com/HanaokaYuzu/Gemini-API#create-a-custom-gem
+    Create a custom gem. name: full API name (e.g. [RenaClip]DisplayName).
+    Returns the created gem object.
     """
     new_gem = await client.create_gem(
         name=name,
@@ -176,8 +179,7 @@ async def create_gem(client, name: str, prompt: str, description: str = ""):
 
 async def update_gem(client, gem_or_id, name: str, prompt: str, description: str = ""):
     """
-    Update an existing custom gem. All of name, prompt, description must be provided.
-    gem_or_id: Gem object or gem id string.
+    Update an existing custom gem. name: full API name (e.g. [RenaClip]DisplayName).
     """
     updated = await client.update_gem(
         gem=gem_or_id,
@@ -192,6 +194,41 @@ async def delete_gem(client, gem_or_id):
     """Delete a custom gem. gem_or_id: Gem object or gem id string."""
     await client.delete_gem(gem_or_id)
     return True
+
+
+def _iter_all_gems(client):
+    """Yield all gem objects from client.gems after fetch_gems_cached. Best-effort."""
+    if not hasattr(client, "gems") or client.gems is None:
+        return
+    try:
+        if hasattr(client.gems, "values"):
+            yield from client.gems.values()
+        elif hasattr(client.gems, "__iter__") and not isinstance(client.gems, (str, bytes)):
+            yield from client.gems
+        else:
+            pass
+    except Exception:
+        pass
+
+
+async def delete_renaclip_gems_not_in_config(client, config_display_names: list[str]):
+    """
+    Fetch all gems; for each gem whose name starts with RENACLIP_PREFIX, if the
+    display name (name without prefix) is not in config_display_names, delete it.
+    """
+    await fetch_gems_cached(client)
+    config_set = set(config_display_names)
+    for gem in _iter_all_gems(client):
+        try:
+            name = getattr(gem, "name", None) or ""
+            if not name.startswith(RENACLIP_PREFIX):
+                continue
+            display_name = name[len(RENACLIP_PREFIX) :].strip()
+            if display_name and display_name not in config_set:
+                await delete_gem(client, gem)
+                print(f"[RenaClip] Deleted orphan gem: {name!r}", flush=True)
+        except Exception as e:
+            print(f"[RenaClip] Failed to check/delete gem: {e}", file=sys.stderr, flush=True)
 
 
 async def generate_with_gem(client, prompt: str, gem_identifier: str, **kwargs):
