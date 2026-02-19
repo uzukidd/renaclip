@@ -16,7 +16,7 @@
 - [ ] Display generated content directly in a pop-up window.
 - [ ] Stack-based clipboard.
 - [ ] Supports multimodal input and response.
-- [ ] Support variant models.
+- [ ] Supports variant models.
 
 ---
 
@@ -31,11 +31,11 @@ RenaClip runs a clipboard service in the system tray. You define **gems** (each 
 
 ## Requirements
 
-- Python 3.10+
-- Dependencies in `requirements-gemini-demo.txt` (Gemini API, clipboard, hotkeys, tray, etc.)
+- Python 3.12+
+- Dependencies in `requirements.txt` (Gemini API, clipboard, hotkeys, tray, etc.)
 
 ```bash
-pip install -r requirements-gemini-demo.txt
+pip install -r requirements.txt
 ```
 
 You also need valid Gemini cookies (e.g. `__Secure-1PSID`, `__Secure-1PSIDTS`) configured in **Settings** (see below).
@@ -67,7 +67,7 @@ You also need valid Gemini cookies (e.g. `__Secure-1PSID`, `__Secure-1PSIDTS`) c
 
 ---
 
-## Screenshots
+## User Interface
 
 ### 1. Main interface
 
