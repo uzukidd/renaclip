@@ -1,10 +1,22 @@
 # RenaClip
 
-![renaclip_logo](assets/renaclip_logo.png)
+![renaclip_logo](README.assets/renaclip_logo.png)
 
 **R**eal-time **E**nhanced **N**eural **A**ssistant for **Clip**board — use Gemini-powered “gems” to process clipboard text with global hotkeys.
 
 ![Notepad_6MNS1et3W5](README.assets/Notepad_6MNS1et3W5.gif)
+
+---
+
+## To-does
+
+- [x] More friendly user interface.
+- [x] Sync Gems with Gemini.
+- [ ] Portable build / single executable (e.g. PyInstaller, flet pack).
+- [ ] Display generated content directly in a pop-up window.
+- [ ] Stack-based clipboard.
+- [ ] Supports multimodal input and response.
+- [ ] Support variant models.
 
 ---
 
@@ -39,7 +51,7 @@ You also need valid Gemini cookies (e.g. `__Secure-1PSID`, `__Secure-1PSIDTS`) c
    ```
    Optional: `python renaclip_app.py --gem "Gem name" --gem "Another"` to use specific gems.
 
-   ![image-20260219015355436](README.assets/image-20260219015355436.png)
+   ![image-20260219015355436](README.assets/image-20260219121402070.png)
 
 2. **Open the UI**  
    Left-click the RenaClip tray icon, or choose **Open UI** from the tray menu.  
