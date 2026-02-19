@@ -25,13 +25,7 @@ AVAILABLE_MODELS = (
     "gemini-3.0-flash",
     "gemini-3.0-flash-thinking",
 )
-DEFAULT_GEMS = [
-    {
-      "name": "Chinese to English Translator",
-      "description": "Translates Chinese text to English.",
-      "prompt": "You are a professional translator. Reply with only the English translation."
-    },
-]
+DEFAULT_GEMS = [ ]
 DEFAULT_SETTINGS = {"GEMINI_1PSID": "", "GEMINI_1PSIDTS": "", "SOCKS5_PROXY": "", "HOTKEY_MODIFIER": "ctrl", "MODEL": "unspecified"}
 
 
@@ -49,6 +43,13 @@ def load_config() -> tuple[list[dict], dict]:
                 settings = {**DEFAULT_SETTINGS, **(data.get("settings") or {})}
         except (json.JSONDecodeError, KeyError):
             pass
+    else:
+        gems = list(DEFAULT_GEMS)
+        try:
+            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+                json.dump({"gems": gems, "settings": settings}, f, ensure_ascii=False, indent=2)
+        except OSError:
+            pass
     if not gems:
         gems = list(DEFAULT_GEMS)
     return gems, settings
@@ -57,181 +58,6 @@ def load_config() -> tuple[list[dict], dict]:
 def save_config(gems: list[dict], settings: dict) -> None:
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump({"gems": gems, "settings": settings}, f, ensure_ascii=False, indent=2)
-
-
-# ---------------------------------------------------------------------------
-# Service: clipboard + hotkey (runs as subprocess or standalone)
-# ---------------------------------------------------------------------------
-
-def _run_service(arg_gems: list[str] | None) -> None:
-    """Clipboard service logic. Imports gemini, keyboard, pyperclip.
-    GEMINI_1PSID/PSIDTS/PROXY come from env (injected at subprocess spawn or by main() for direct run).
-    """
-    import pyperclip
-    from gemini_client import GemNotFoundError, _delete_chat_after, ensure_gem_exists, get_client, get_or_create_gem
-    
-    # Windows toast notification support
-    try:
-        from win10toast import ToastNotifier
-        _notifier = ToastNotifier()
-    except ImportError:
-        _notifier = None
-    
-    def show_notification(title: str, message: str) -> None:
-        """Show a Windows toast notification if notifier is available."""
-        if _notifier is None:
-            return
-        try:
-            # win10toast has a known bug with threaded=True causing WNDPROC errors
-            # Use threaded=False to avoid the issue, or catch the specific error
-            _notifier.show_toast(title, message, duration=5, threaded=False)
-        except (TypeError, ValueError) as e:
-            # Catch WNDPROC/WPARAM errors which are harmless but noisy
-            if "WPARAM" in str(e) or "WNDPROC" in str(e) or "LRESULT" in str(e):
-                pass  # Silently ignore this known win10toast bug
-            else:
-                print(f"[Notification error] {e}", file=sys.stderr, flush=True)
-        except Exception as e:
-            print(f"[Notification error] {e}", file=sys.stderr, flush=True)
-
-    gems_data, settings = load_config()
-    mod = (settings.get("HOTKEY_MODIFIER") or "ctrl").strip().lower()
-    if mod not in VALID_MODIFIERS:
-        mod = "ctrl"
-    
-    model = (settings.get("MODEL") or "unspecified").strip()
-    if model not in AVAILABLE_MODELS:
-        model = "unspecified"
-
-    specs = [{"name": s.strip() for s in arg_gems}] if arg_gems else gems_data
-    if not specs:
-        print("Error: at least one gem required.", file=sys.stderr)
-        raise SystemExit(1)
-
-    async def _main():
-        client = get_client()
-        await client.init(timeout=30, auto_close=False, close_delay=300, auto_refresh=True)
-        gems: list = []
-        for i, spec in enumerate(specs):
-            name = spec["name"]
-            if "prompt" in spec:
-                g, created = await get_or_create_gem(client, name=name, prompt=spec["prompt"], description=spec.get("description", ""))
-                print(f"  {mod}+{i + 1}: {g.name!r} (created={created})", flush=True)
-            else:
-                try:
-                    g = await ensure_gem_exists(client, name)
-                except GemNotFoundError as e:
-                    print(f"Error: {e}", file=sys.stderr)
-                    raise SystemExit(1) from e
-                print(f"  {mod}+{i + 1}: {g.name!r}", flush=True)
-            gems.append(g)
-        
-        if model != "unspecified":
-            print(f"Using model: {model}", flush=True)
-
-        try:
-            import keyboard
-        except ImportError:
-            print("Install 'keyboard': pip install keyboard", file=sys.stderr)
-            raise SystemExit(1)
-
-        loop = asyncio.get_running_loop()
-        stop_ev = asyncio.Event()
-
-        async def process_clip(g, text: str):
-            if not text or not text.strip():
-                return
-            chat = client.start_chat(gem=g, model=model)
-            try:
-                resp = await chat.send_message(text)
-                pyperclip.copy((resp.text or "").strip())
-                print("[Clipboard] Updated.", flush=True)
-                gem_name = getattr(g, "name", None) or "(unknown gem)"
-                show_notification("RenaClip", f"Clipboard updated by {gem_name}.")
-            except Exception as e:
-                pyperclip.copy(f"[Error] {e}")
-                print(e, file=sys.stderr, flush=True)
-                show_notification("RenaClip", "Gemini clipboard processing failed. See console for details.")
-            finally:
-                await _delete_chat_after(client, chat)
-
-        def on_key(g, i):
-            try:
-                t = pyperclip.paste() or ""
-            except Exception as ex:
-                print(f"[Clipboard read error] {ex}", file=sys.stderr)
-                return
-            print(
-                f"[Hotkey {i + 1}] Triggered. Clipboard length={len(t.strip())}",
-                flush=True,
-            )
-            if not t.strip():
-                print(f"[Hotkey {i + 1}] Clipboard is empty, skipped.", flush=True)
-                return
-            asyncio.run_coroutine_threadsafe(process_clip(g, t), loop)
-
-        for i, g in enumerate(gems):
-            keyboard.add_hotkey(f"{mod}+{i + 1}", lambda g=g, i=i: on_key(g, i))
-        keyboard.add_hotkey(f"{mod}+q", lambda: loop.call_soon_threadsafe(stop_ev.set))
-        print(f"Listening: {mod}+1..{mod}+{len(gems)}, {mod}+q = exit.", flush=True)
-
-        tray_icon = None
-
-        def _tray_open_ui(icon, item):
-            try:
-                subprocess.Popen(
-                    [sys.executable, str(Path(__file__).resolve())],
-                    cwd=SCRIPT_DIR,
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0,
-                )
-            except Exception:
-                pass
-
-        def _tray_exit(icon, item):
-            loop.call_soon_threadsafe(stop_ev.set)
-            icon.stop()
-
-        try:
-            import pystray
-            from PIL import Image
-            size = 64
-            icon_path = SCRIPT_DIR / "assets" / "renaclip_icon.png"
-            if icon_path.is_file():
-                try:
-                    resample = getattr(Image, "Resampling", None)
-                    filter_ = resample.LANCZOS if resample else getattr(Image, "LANCZOS", 1)
-                    img = Image.open(icon_path).convert("RGBA").resize((size, size), filter_)
-                except Exception:
-                    img = Image.new("RGBA", (size, size), (76, 175, 80, 255))
-            else:
-                img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-                from PIL import ImageDraw
-                d = ImageDraw.Draw(img)
-                d.ellipse([4, 4, size - 4, size - 4], fill=(76, 175, 80), outline=(56, 142, 60))
-                d.ellipse([size // 2 - 4, size // 2 - 4, size // 2 + 4, size // 2 + 4], fill=(255, 255, 255))
-            menu = pystray.Menu(
-                pystray.MenuItem("Open UI", _tray_open_ui, default=True),
-                pystray.MenuItem("Exit", _tray_exit),
-            )
-            tray_icon = pystray.Icon("rena_clip", img, f"{APP_NAME} (running)", menu)
-            tray_thread = threading.Thread(target=tray_icon.run, daemon=True)
-            tray_thread.start()
-        except ImportError:
-            pass
-
-        try:
-            await stop_ev.wait()
-        finally:
-            if tray_icon is not None:
-                try:
-                    tray_icon.stop()
-                except Exception:
-                    pass
-            keyboard.unhook_all()
-            await client.close()
-
-    asyncio.run(_main())
-
 
 def start_service(extra_args: list[str] | None = None) -> subprocess.Popen | None:
     """Spawn service as subprocess. Injects config as temp env vars. Runs without console for reliable kill."""
@@ -378,8 +204,13 @@ def _ui_main(page):
         if not gems:
             col.controls.append(ft.Text("No gems yet. Click 'Add Gem' to create one.", color=ft.Colors.GREY_600))
         else:
+            mod = (settings.get("HOTKEY_MODIFIER") or "ctrl").strip().lower()
+            if mod not in VALID_MODIFIERS:
+                mod = "ctrl"
+            mod_label = "+".join(p.capitalize() for p in mod.split("+"))
             for i, g in enumerate(gems):
                 idx = i
+                shortcut = f"{mod_label}+{i + 1}"
 
                 def mk_edit(j):
                     return lambda e: open_edit(j)
@@ -394,7 +225,19 @@ def _ui_main(page):
                                 [
                                     ft.Column(
                                         [
-                                            ft.Text(g.get("name", "Unnamed"), weight=ft.FontWeight.W_600, size=16),
+                                            ft.Row(
+                                                [
+                                                    ft.Text(g.get("name", "Unnamed"), weight=ft.FontWeight.W_600, size=16),
+                                                    ft.Container(
+                                                        content=ft.Text(shortcut, size=11, color=ft.Colors.WHITE),
+                                                        bgcolor=ft.Colors.GREEN_700,
+                                                        padding=ft.padding.symmetric(horizontal=8, vertical=4),
+                                                        border_radius=4,
+                                                    ),
+                                                ],
+                                                spacing=8,
+                                                wrap=True,
+                                            ),
                                             ft.Text((g.get("description", "") or "")[:80] + ("..." if len(g.get("description", "")) > 80 else ""), size=12, color=ft.Colors.GREY_700),
                                         ],
                                         expand=True,
@@ -490,9 +333,12 @@ def _ui_main(page):
         #     alignment=ft.MainAxisAlignment.START,
         #     spacing=8,
         # ),
-        ft.Text("Modifying gems or settings requires restarting the program.", size=11),
+        ft.Text("Restart the program to apply gems and settings.", size=11),
         ft.Divider(),
-        ft.Column(ref=gem_list_ref, spacing=8),
+        ft.Container(
+            content=ft.Column(ref=gem_list_ref, spacing=8, scroll=ft.ScrollMode.AUTO, expand=True),
+            expand=True,
+        ),
     )
     rebuild_gems()
 
@@ -503,25 +349,6 @@ def _ui_main(page):
 
 def main():
     args = sys.argv[1:]
-    # if "--service" in args:
-    #     # Direct run: inject config as temp env vars
-    #     _, settings = load_config()
-    #     for k in ("GEMINI_1PSID", "GEMINI_1PSIDTS", "SOCKS5_PROXY"):
-    #         v = (settings.get(k) or "").strip()
-    #         if v:
-    #             os.environ[k] = v
-    #     idx = args.index("--service")
-    #     rest = args[idx + 1 :]
-    #     gems_args = []
-    #     i = 0
-    #     while i < len(rest):
-    #         if rest[i] == "--gem" and i + 1 < len(rest):
-    #             gems_args.append(rest[i + 1])
-    #             i += 2
-    #         else:
-    #             i += 1
-    #     _run_service(gems_args if gems_args else None)
-    # else:
     UI_LOCK = SCRIPT_DIR / ".renaclip_ui.lock"
 
     def _remove_ui_lock():
