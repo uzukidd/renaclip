@@ -59,7 +59,6 @@ def save_config(gems: list[dict], settings: dict) -> None:
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump({"gems": gems, "settings": settings}, f, ensure_ascii=False, indent=2)
 
-
 # ---------------------------------------------------------------------------
 # UI (Flet)
 # ---------------------------------------------------------------------------
@@ -81,6 +80,15 @@ def _ui_main(page):
     gems, settings = load_config()
     gem_list_ref = ft.Ref[ft.ReorderableListView]()
     clip_proc_ref = ft.Ref[object]()
+
+    def on_reorder(e):
+        old_idx = e.old_index
+        new_idx = e.new_index
+        if 0 <= old_idx < len(gems) and 0 <= new_idx < len(gems):
+            item = gems.pop(old_idx)
+            gems.insert(new_idx, item)
+            save_config(gems, settings)
+            rebuild_gems()
 
     def on_reorder(e):
         old_idx = e.old_index
