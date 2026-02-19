@@ -9,20 +9,187 @@ Gemini client module: client factory, single/stream/chat runners, Gem API.
 
 import os
 import sys
+import time
 
-# Local SOCKS5 proxy (set SOCKS5_PROXY env to override)
-DEFAULT_PROXY = "socks5://127.0.0.1:8889"
+from selenium import webdriver
+from selenium.webdriver.edge.options import Options as EdgeOptions
+from selenium.webdriver.chrome.options import Options as ChromeOptions
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+
+# Local SOCKS5 proxy (set SOCKS5_PROXY env to use proxy, leave empty to disable)
+# DEFAULT_PROXY is None by default - proxy is only used if SOCKS5_PROXY env is set
+DEFAULT_PROXY = None
+
+
+def get_cookies_from_browser():
+    """
+    Launch browser with visible window (Edge or Chrome), open https://gemini.google.com,
+    and wait for user to log in. Checks cookies every 3 seconds for
+    __Secure-1PSID and __Secure-1PSIDTS. Returns when cookies are found.
+
+    Browser type is selected via config/env:
+    - COOKIE_BROWSER = "edge" (default) or "chrome"
+
+    Uses current directory as browser user data directory (.edge_user_data / .chrome_user_data)
+    to avoid conflicts with already running browsers.
+
+    If user closes the browser window, raises an exception.
+
+    Returns tuple (psid, psidts) or (None, None) if not found.
+    """
+    driver = None
+    try:
+        # Decide which browser to use
+        browser = (os.environ.get("COOKIE_BROWSER") or "edge").strip().lower()
+        if browser not in {"edge", "chrome"}:
+            browser = "edge"
+
+        # Use current directory as browser user data directory
+        current_dir = os.getcwd()
+        if browser == "chrome":
+            user_data_dir = os.path.join(current_dir, ".chrome_user_data")
+        else:
+            user_data_dir = os.path.join(current_dir, ".edge_user_data")
+
+        profile_name = "Default"
+
+        # Create directory if it doesn't exist
+        os.makedirs(user_data_dir, exist_ok=True)
+
+        # Configure browser options
+        if browser == "chrome":
+            options = ChromeOptions()
+        else:
+            options = EdgeOptions()
+
+        # Use current directory for user data
+        options.add_argument(f"--user-data-dir={user_data_dir}")
+        options.add_argument(f"--profile-directory={profile_name}")
+
+        # Add remote debugging port to avoid conflicts
+        debug_port = 9000
+        options.add_argument(f"--remote-debugging-port={debug_port}")
+
+        # Add stability arguments
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option("useAutomationExtension", False)
+
+        # Do NOT use headless mode - user needs to see the window to log in
+
+        # Create browser driver
+        print(f"Starting {browser.capitalize()} browser (user data: {user_data_dir})...", flush=True)
+        if browser == "chrome":
+            driver = webdriver.Chrome(options=options)
+        else:
+            driver = webdriver.Edge(options=options)
+
+        # Navigate to Gemini website
+        print("Opening https://gemini.google.com - please log in...", flush=True)
+        driver.get("https://gemini.google.com")
+        
+        # Wait for page to load
+        WebDriverWait(driver, 30).until(
+            EC.presence_of_element_located((By.TAG_NAME, "body"))
+        )
+        
+        # Poll for cookies every 3 seconds
+        print("Waiting for login cookies...", flush=True)
+        max_wait_time = 300  # Maximum 5 minutes
+        elapsed_time = 0
+        
+        while elapsed_time < max_wait_time:
+            # Check if browser window is still open
+            try:
+                # Try to get window handles - if this fails, window is closed
+                window_handles = driver.window_handles
+                if not window_handles:
+                    raise RuntimeError("Browser window was closed by user")
+                
+                # Try to get current URL - if this fails, session is lost
+                current_url = driver.current_url
+            except Exception as e:
+                error_msg = str(e).lower()
+                if "no such window" in error_msg or "invalid session id" in error_msg:
+                    raise RuntimeError("Browser window was closed by user. Please keep the window open until login is complete.")
+                raise
+            
+            # Get all cookies
+            cookies = driver.get_cookies()
+            
+            # Extract the required cookies
+            psid = None
+            psidts = None
+            
+            for cookie in cookies:
+                if cookie["name"] == "__Secure-1PSID":
+                    psid = cookie["value"]
+                elif cookie["name"] == "__Secure-1PSIDTS":
+                    psidts = cookie["value"]
+            
+            # If both cookies are found, return them
+            if psid:
+                print(
+                    f"\nSuccessfully retrieved cookies: __Secure-1PSID=***, "
+                    f"__Secure-1PSIDTS={'***' if psidts else 'not found'}",
+                    flush=True,
+                )
+                return psid, psidts
+            
+            # Wait 3 seconds before next check
+            print(".", end="", flush=True)
+            time.sleep(3)
+            elapsed_time += 3
+        
+        # Timeout
+        print("\nTimeout: Cookies not found after waiting.", flush=True)
+        return None, None
+        
+    except RuntimeError as e:
+        # Re-raise RuntimeError (window closed)
+        print(f"\nError: {e}", file=sys.stderr, flush=True)
+        raise
+    except Exception as e:
+        error_msg = str(e)
+        if "DevToolsActivePort" in error_msg or "session not created" in error_msg.lower():
+            print(
+                "\nError: Edge browser failed to start. This usually happens when:\n"
+                "1. Edge browser is already running and using the same profile\n"
+                "2. The user data directory is locked\n\n"
+                "Solutions:\n"
+                "  - Close all Edge browser windows and try again\n"
+                "  - Or delete the .edge_user_data directory in current folder\n",
+                file=sys.stderr,
+                flush=True,
+            )
+        else:
+            print(f"Error retrieving cookies from browser: {e}", file=sys.stderr, flush=True)
+        return None, None
+    finally:
+        if driver:
+            try:
+                driver.quit()
+            except Exception:
+                pass
 
 
 def get_client(psid=None, psidts=None):
     """Build GeminiClient from env cookies or browser (browser-cookie3)."""
     from gemini_webapi import GeminiClient
 
+    # Only use proxy if SOCKS5_PROXY env is explicitly set
     env_proxy = os.environ.get("SOCKS5_PROXY")
     if env_proxy is None:
-        proxy = DEFAULT_PROXY
+        proxy = DEFAULT_PROXY  # None by default - no proxy
     else:
-        proxy = env_proxy.strip() or None
+        proxy = env_proxy.strip() or None  # Empty string becomes None
+    
+    if proxy:
+        print(f"Using proxy: {proxy}", flush=True)
 
     if psid is None:
         psid = (os.environ.get("GEMINI_1PSID") or "").strip()
@@ -32,6 +199,17 @@ def get_client(psid=None, psidts=None):
     if psid:
         has_psidts = "yes" if psidts else "no"
         print(f"Using env cookies: GEMINI_1PSID=***, GEMINI_1PSIDTS={has_psidts}", flush=True)
+        print(f"psid: {psid}")
+        if psid == "auto":
+            # Use selenium to launch Edge browser and get cookies
+            try:
+                psid, psidts = get_cookies_from_browser()
+                if not psid:
+                    raise ValueError("Failed to retrieve __Secure-1PSID cookie from browser")
+            except RuntimeError as e:
+                # Re-raise RuntimeError (browser window closed by user)
+                raise ValueError(f"Login process interrupted: {e}") from e
+            
         return GeminiClient(psid, psidts, proxy=proxy)
     try:
         return GeminiClient(proxy=proxy)
