@@ -13,8 +13,8 @@ DEFAULT_SETTINGS = {
     "SOCKS5_PROXY": "",
     "HOTKEY_MODIFIER": "ctrl",
     "MODEL": "unspecified",
-    # Browser used for cookie login flow: "edge" or "chrome"
     "COOKIE_BROWSER": "edge",
+    "USE_BROWSER_COOKIE": False,  # True = login via browser-cookie3; disables manual PSID/PSIDTS
 }
 
 VALID_MODIFIERS = ("ctrl", "ctrl+shift", "ctrl+alt", "ctrl+shift+alt")

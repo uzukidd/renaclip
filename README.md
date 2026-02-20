@@ -38,7 +38,8 @@ RenaClip runs a clipboard service in the system tray. You define **gems** (each 
 pip install -r requirements.txt
 ```
 
-You also need valid Gemini cookies (e.g. `__Secure-1PSID`, `__Secure-1PSIDTS`) configured in **Settings** (see below).
+You also need valid Gemini cookies (e.g. `__Secure-1PSID`, `__Secure-1PSIDTS`) configured in **Settings** (see below).  
+If you use **Log in via browser-cookie3**, ensure you are already logged into [Gemini](https://gemini.google.com) in your browser.
 
 ---
 
@@ -53,9 +54,9 @@ You also need valid Gemini cookies (e.g. `__Secure-1PSID`, `__Secure-1PSIDTS`) c
 
    ![image-20260219015355436](README.assets/image-20260219121402070.png)
 
-2. **Open the UI**  
-   Left-click the RenaClip tray icon, or choose **Open UI** from the tray menu.  
-   If the UI is already open, another window is not started.
+2. **Open the menu**  
+   Left-click the RenaClip tray icon, or choose **Open menu** from the tray menu.  
+   If the menu is already open, another window is not started.
 
    ![image-20260219020449869](README.assets/image-20260219020449869.png)
 
@@ -67,7 +68,7 @@ You also need valid Gemini cookies (e.g. `__Secure-1PSID`, `__Secure-1PSIDTS`) c
 
 ---
 
-## User Interface
+## Menu
 
 ### 1. Main interface
 
@@ -83,8 +84,8 @@ Set the gem **name**, **description**, and **prompt** (system instruction). Used
 
 ### 3. Settings
 
-Configure Gemini cookies (`GEMINI_1PSID`, `GEMINI_1PSIDTS`), optional **SOCKS5 proxy**, **hotkey modifier** (e.g. ctrl, ctrl+shift), and **model**.  
-After changing settings, restart the program for them to take effect.
+Configure Gemini cookies (`GEMINI_1PSID`, `GEMINI_1PSIDTS`) or enable `Log in via browser-cookie3`, optional **SOCKS5 proxy**, **hotkey modifier** (e.g. ctrl, ctrl+shift), and **model**.  
+After changing settings, restart to take effect.
 
 ![Settings](README.assets/settings.png)
 

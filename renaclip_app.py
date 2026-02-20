@@ -170,7 +170,6 @@ async def process_clipboard_with_gem(client, gem, text: str, model: str = "unspe
         show_notification("RenaClip", f"Clipboard updated by {gem_name}.")
     except Exception as e:
         err_msg = f"[Gemini clipboard error] {e}"
-        pyperclip.copy(err_msg)
         print(err_msg, file=sys.stderr, flush=True)
         show_notification("RenaClip", "Gemini clipboard processing failed. See console for details.")
     finally:
@@ -205,14 +204,17 @@ def on_hotkey(loop, client, gem, index: int, model: str = "unspecified"):
 
 async def main_async(arg_gems: list[str] | None):
     # Apply config (env + hotkey) before get_client
+    GEMINI_1PSID = None
+    GEMINI_1PSIDTS = None
+    SOCKS5_PROXY = None
+    COOKIE_BROWSER = None
+    USE_BROWSER_COOKIE = False
+    
     try:
         from config_loader import load_config, VALID_MODIFIERS, AVAILABLE_MODELS
         _, cfg_settings = load_config()
         
-        GEMINI_1PSID = None
-        GEMINI_1PSIDTS = None
-        SOCKS5_PROXY = None
-        COOKIE_BROWSER = None
+
         
         # Apply relevant settings to environment
         for k in ("GEMINI_1PSID", "GEMINI_1PSIDTS", "SOCKS5_PROXY", "COOKIE_BROWSER"):
@@ -222,6 +224,8 @@ async def main_async(arg_gems: list[str] | None):
                 GEMINI_1PSIDTS = v if k == "GEMINI_1PSIDTS" else GEMINI_1PSIDTS
                 SOCKS5_PROXY = v if k == "SOCKS5_PROXY" else SOCKS5_PROXY
                 COOKIE_BROWSER = v if k == "COOKIE_BROWSER" else COOKIE_BROWSER
+                
+        USE_BROWSER_COOKIE = cfg_settings.get("USE_BROWSER_COOKIE", False)
                 
     except ImportError:
         cfg_settings = {}
@@ -243,6 +247,11 @@ async def main_async(arg_gems: list[str] | None):
             model = "unspecified"
     except ImportError:
         model = "unspecified"
+        
+    if USE_BROWSER_COOKIE:
+        print("Using browser cookie to get GEMINI_1PSID and GEMINI_1PSIDTS.", flush=True)
+        GEMINI_1PSID = None
+        GEMINI_1PSIDTS = None
 
     client = get_client(proxy=SOCKS5_PROXY, psid=GEMINI_1PSID, psidts=GEMINI_1PSIDTS, cookie_browser=COOKIE_BROWSER)
     if client is None:
@@ -323,7 +332,7 @@ async def main_async(arg_gems: list[str] | None):
                 icon.stop()
 
             menu = pystray.Menu(
-                pystray.MenuItem("Open UI", on_open_ui, default=True),
+                pystray.MenuItem("Open menu", on_open_ui, default=True),
                 pystray.MenuItem("Exit", on_tray_exit),
             )
             tray_icon = pystray.Icon("renaclip", tray_image, "RenaClip", menu)
