@@ -15,3 +15,4 @@ Pillow>=9.0.0
 win10toast>=0.9
 # Selenium for browser automation
 selenium>=4.0.0
+browser-cookie3>=0.18.0

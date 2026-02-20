@@ -26,7 +26,7 @@ AVAILABLE_MODELS = (
     "gemini-3.0-flash-thinking",
 )
 DEFAULT_GEMS = [ ]
-DEFAULT_SETTINGS = {"GEMINI_1PSID": "", "GEMINI_1PSIDTS": "", "SOCKS5_PROXY": "", "HOTKEY_MODIFIER": "ctrl", "MODEL": "unspecified"}
+DEFAULT_SETTINGS = {"GEMINI_1PSID": "", "GEMINI_1PSIDTS": "", "SOCKS5_PROXY": "", "HOTKEY_MODIFIER": "ctrl", "MODEL": "unspecified", "USE_BROWSER_COOKIE": False}
 
 
 # ---------------------------------------------------------------------------
@@ -120,13 +120,6 @@ def _ui_main(page):
                         content=ft.Container(
                             content=ft.Row(
                                 [
-                                    # ft.Container(
-                                    #     content=ft.Row([
-                                    #         ft.Container(width=2, height=16, bgcolor=ft.Colors.GREY_400, border_radius=1),
-                                    #         ft.Container(width=2, height=16, bgcolor=ft.Colors.GREY_400, border_radius=1),
-                                    #     ], spacing=2),
-                                    #     padding=ft.padding.only(right=4),
-                                    # ),
                                     ft.Column(
                                         [
                                             ft.Row(
@@ -194,8 +187,23 @@ def _ui_main(page):
         page.show_dialog(d)
 
     def open_settings(e=None):
-        pf = ft.TextField(label="GEMINI_1PSID", value=settings.get("GEMINI_1PSID", ""), width=450, password=True, can_reveal_password=True)
-        pt = ft.TextField(label="GEMINI_1PSIDTS", value=settings.get("GEMINI_1PSIDTS", ""), width=450, password=True, can_reveal_password=True)
+        use_browser_cookie = settings.get("USE_BROWSER_COOKIE") is True
+        pf = ft.TextField(label="GEMINI_1PSID", value=settings.get("GEMINI_1PSID", ""), width=450, password=True, can_reveal_password=True, disabled=use_browser_cookie)
+        pt = ft.TextField(label="GEMINI_1PSIDTS", value=settings.get("GEMINI_1PSIDTS", ""), width=450, password=True, can_reveal_password=True, disabled=use_browser_cookie)
+        cb = ft.Checkbox(label="Log in via browser-cookie3", value=use_browser_cookie)
+
+        def on_cb_change(e):
+            use = cb.value
+            pf.disabled = use
+            pt.disabled = use
+            try:
+                pf.update()
+                pt.update()
+            except Exception:
+                pass
+
+        cb.on_change = on_cb_change
+
         px = ft.TextField(label="Proxy (SOCKS5_PROXY)", value=settings.get("SOCKS5_PROXY", ""), width=450, hint_text="e.g. socks5://127.0.0.1:8889")
         dd = ft.Dropdown(label="Hotkey modifier", value=settings.get("HOTKEY_MODIFIER", "ctrl"), width=450, options=[ft.dropdown.Option(m) for m in VALID_MODIFIERS])
         model_dd = ft.Dropdown(label="Model", value=settings.get("MODEL", "unspecified"), width=450, options=[ft.dropdown.Option(m) for m in AVAILABLE_MODELS])
@@ -207,6 +215,7 @@ def _ui_main(page):
             settings["GEMINI_1PSID"] = (pf.value or "").strip()
             settings["GEMINI_1PSIDTS"] = (pt.value or "").strip()
             settings["SOCKS5_PROXY"] = (px.value or "").strip()
+            settings["USE_BROWSER_COOKIE"] = bool(cb.value)
             m = (dd.value or "ctrl").strip().lower()
             settings["HOTKEY_MODIFIER"] = m if m in VALID_MODIFIERS else "ctrl"
             model_val = (model_dd.value or "unspecified").strip()
@@ -218,7 +227,7 @@ def _ui_main(page):
             ft.AlertDialog(
                 title=ft.Text("Settings"),
                 content=ft.Column(
-                    [ft.Text("Set GEMINI_1PSID to 'auto' to trigger browser login (may not work every time).", size=11, color=ft.Colors.GREY_600), pf, pt, px, dd, model_dd, ft.Row([ft.OutlinedButton("Cancel", on_click=lambda e: close()), ft.FilledButton("Save", on_click=save_set)], alignment=ft.MainAxisAlignment.END)],
+                    [ft.Text("Set GEMINI_1PSID to 'auto' to trigger browser login (may not work every time).", size=11, color=ft.Colors.GREY_600), pf, pt, cb, px, dd, model_dd, ft.Row([ft.OutlinedButton("Cancel", on_click=lambda e: close()), ft.FilledButton("Save", on_click=save_set)], alignment=ft.MainAxisAlignment.END)],
                     tight=True,
                     spacing=12,
                 ),
@@ -259,7 +268,7 @@ def main():
         pass
     atexit.register(_remove_ui_lock)
     import flet as ft
-    ft.app(target=_ui_main, name=APP_NAME)
+    ft.run(main=_ui_main, name=APP_NAME)
 
 
 if __name__ == "__main__":
