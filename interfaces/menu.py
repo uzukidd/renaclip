@@ -1,71 +1,32 @@
 """
-Rena Clip - Single script: UI + clipboard service.
-Usage:
-  python renaclip.py          # Launch UI
-  python renaclip.py --service  # Run clipboard service (used when UI clicks Start)
-  python renaclip.py --service --gem "X" --gem "Y"  # Service with explicit gems
+RenaClip UI host. Run the settings/gem list window via launch_ui() (non-blocking).
 """
 
-import asyncio
-import atexit
-import json
 import os
-import subprocess
-import sys
 import threading
 from pathlib import Path
 
+from config_loader import load_config, save_config, VALID_MODIFIERS, AVAILABLE_MODELS
+
 SCRIPT_DIR = Path(__file__).resolve().parent
-CONFIG_PATH = SCRIPT_DIR / "gem_config.json"
-APP_NAME = "RenaClip"  # Window title and Flet app name (taskbar / Alt+Tab)
-VALID_MODIFIERS = ("ctrl", "ctrl+shift", "ctrl+alt", "ctrl+shift+alt")
-AVAILABLE_MODELS = (
-    "unspecified",
-    "gemini-3.0-pro",
-    "gemini-3.0-flash",
-    "gemini-3.0-flash-thinking",
-)
-DEFAULT_GEMS = [ ]
-DEFAULT_SETTINGS = {"GEMINI_1PSID": "", "GEMINI_1PSIDTS": "", "SOCKS5_PROXY": "", "HOTKEY_MODIFIER": "ctrl", "MODEL": "unspecified", "USE_BROWSER_COOKIE": False}
+APP_NAME = "RenaClip"
+UI_LOCK_PATH = SCRIPT_DIR / ".renaclip_ui.lock"
 
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-
-def load_config() -> tuple[list[dict], dict]:
-    gems, settings = [], dict(DEFAULT_SETTINGS)
-    if CONFIG_PATH.exists():
-        try:
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                gems = data.get("gems", gems)
-                settings = {**DEFAULT_SETTINGS, **(data.get("settings") or {})}
-        except (json.JSONDecodeError, KeyError):
-            pass
-    else:
-        gems = list(DEFAULT_GEMS)
-        try:
-            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-                json.dump({"gems": gems, "settings": settings}, f, ensure_ascii=False, indent=2)
-        except OSError:
-            pass
-    if not gems:
-        gems = list(DEFAULT_GEMS)
-    return gems, settings
-
-
-def save_config(gems: list[dict], settings: dict) -> None:
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump({"gems": gems, "settings": settings}, f, ensure_ascii=False, indent=2)
+def _remove_ui_lock(lock_path: Path | None = None) -> None:
+    p = lock_path or UI_LOCK_PATH
+    try:
+        p.unlink(missing_ok=True)
+    except Exception:
+        pass
 
 # ---------------------------------------------------------------------------
 # UI (Flet)
 # ---------------------------------------------------------------------------
 
-def _ui_main(page):
+def _ui_main(page, *, lock_path: Path | None = None):
     import flet as ft
-
+        
     page.title = APP_NAME
     icon_path = SCRIPT_DIR / "assets" / "renaclip_icon.ico"
     if not icon_path.is_file():
@@ -80,15 +41,6 @@ def _ui_main(page):
     gems, settings = load_config()
     gem_list_ref = ft.Ref[ft.ReorderableListView]()
     clip_proc_ref = ft.Ref[object]()
-
-    def on_reorder(e):
-        old_idx = e.old_index
-        new_idx = e.new_index
-        if 0 <= old_idx < len(gems) and 0 <= new_idx < len(gems):
-            item = gems.pop(old_idx)
-            gems.insert(new_idx, item)
-            save_config(gems, settings)
-            rebuild_gems()
 
     def on_reorder(e):
         old_idx = e.old_index
@@ -255,29 +207,21 @@ def _ui_main(page):
     )
     rebuild_gems()
 
-
-# ---------------------------------------------------------------------------
-# Entry
-# ---------------------------------------------------------------------------
-
-def main():
-    args = sys.argv[1:]
-    UI_LOCK = SCRIPT_DIR / ".renaclip_ui.lock"
-
-    def _remove_ui_lock():
-        try:
-            UI_LOCK.unlink(missing_ok=True)
-        except Exception:
-            pass
-
+import atexit
+def launch_ui(lock_path: Path | None = None) -> None:
+    """
+    Start the RenaClip UI window in a background thread (non-blocking).
+    Uses lock_path for .renaclip_ui.lock; lock is removed when the window is closed
+    via page.window.on_close.
+    """
+    path = lock_path or UI_LOCK_PATH
+        
     try:
-        UI_LOCK.write_text(str(os.getpid()), encoding="utf-8")
+        path.write_text(str(os.getpid()), encoding="utf-8")
     except Exception:
         pass
     atexit.register(_remove_ui_lock)
     import flet as ft
-    ft.run(main=_ui_main, name=APP_NAME)
+    ft.run(main=lambda page: _ui_main(page, lock_path=path), name=APP_NAME)
+    print("UI finished")
 
-
-if __name__ == "__main__":
-    main()
