@@ -66,3 +66,8 @@ def load_config() -> tuple[list[dict], dict]:
     if not gems:
         gems = list(DEFAULT_GEMS)
     return gems, settings
+
+
+def save_config(gems: list[dict], settings: dict) -> None:
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump({"gems": gems, "settings": settings}, f, ensure_ascii=False, indent=2)
