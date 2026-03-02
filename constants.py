@@ -2,6 +2,7 @@
 Path constants based on the directory of the running program (script or frozen executable).
 """
 
+import flet as ft
 import sys
 from pathlib import Path
 
@@ -14,6 +15,10 @@ def _get_app_root() -> Path:
 
 
 APP_ROOT = _get_app_root()
+
+# # Environment flags
+# print(getattr(sys, "FLET_PLATFORM", None))
+# IS_DEV = not getattr(sys, "FLET_APP_STORAGE_DATA", False)
 
 # Config and data
 CONFIG_PATH = APP_ROOT / "gem_config.json"

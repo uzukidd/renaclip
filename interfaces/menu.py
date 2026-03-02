@@ -7,6 +7,7 @@ import threading
 from pathlib import Path
 
 from config_loader import load_config, save_config, VALID_MODIFIERS, AVAILABLE_MODELS
+from constants import APP_ROOT, IS_DEV
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 APP_NAME = "RenaClip"
@@ -26,8 +27,11 @@ def _remove_ui_lock(lock_path: Path | None = None) -> None:
 
 def _ui_main(page, *, lock_path: Path | None = None):
     import flet as ft
-        
-    page.title = APP_NAME
+
+    env_prefix = "(Dev) " if IS_DEV else ""
+    display_name = f"{env_prefix}{APP_NAME}"
+
+    page.title = f"{display_name} - {APP_ROOT}"
     icon_path = SCRIPT_DIR / "assets" / "renaclip_icon.ico"
     if not icon_path.is_file():
         icon_path = SCRIPT_DIR / "assets" / "renaclip_icon.png"
@@ -196,7 +200,7 @@ def _ui_main(page, *, lock_path: Path | None = None):
         )
 
     page.add(
-        ft.Row([ft.Text(APP_NAME, size=24, weight=ft.FontWeight.BOLD), ft.Container(expand=True), ft.OutlinedButton("Settings", on_click=open_settings), ft.FilledButton("Add Gem", on_click=lambda e: open_edit(None))], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+        ft.Row([ft.Text(f"{display_name} - {APP_ROOT}", size=24, weight=ft.FontWeight.BOLD), ft.Container(expand=True), ft.OutlinedButton("Settings", on_click=open_settings), ft.FilledButton("Add Gem", on_click=lambda e: open_edit(None))], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
 
         ft.Text("Restart to apply gems and settings.", size=11),
         ft.Divider(),
@@ -208,6 +212,7 @@ def _ui_main(page, *, lock_path: Path | None = None):
     rebuild_gems()
 
 import atexit
+import flet as ft
 def launch_ui(lock_path: Path | None = None) -> None:
     """
     Start the RenaClip UI window in a background thread (non-blocking).
@@ -221,7 +226,7 @@ def launch_ui(lock_path: Path | None = None) -> None:
     except Exception:
         pass
     atexit.register(_remove_ui_lock)
-    import flet as ft
+    
     ft.run(main=lambda page: _ui_main(page, lock_path=path), name=APP_NAME)
     print("UI finished")
 

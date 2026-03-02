@@ -1,5 +1,7 @@
 # Gemini-API demo dependencies (https://github.com/HanaokaYuzu/Gemini-API)
 # Python 3.10+
+flet
+requests
 gemini-webapi>=1.18.0
 # Optional: required when using SOCKS5 proxy (e.g. socks5://127.0.0.1:8889)
 httpx[socks]>=0.27.0

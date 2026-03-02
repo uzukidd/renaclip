@@ -1,0 +1,1 @@
+flet build windows . --template ./flet-build-template/ --module-name ./renaclip_ui.py
