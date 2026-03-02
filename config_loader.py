@@ -5,7 +5,7 @@ Shared config loader for gem_config.json. Used by flet_demo and renaclip_app.
 import json
 from pathlib import Path
 
-CONFIG_PATH = Path(__file__).resolve().parent / "gem_config.json"
+from constants import CONFIG_PATH
 
 DEFAULT_SETTINGS = {
     "GEMINI_1PSID": "",

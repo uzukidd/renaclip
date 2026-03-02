@@ -5,7 +5,6 @@ Deprecated: Use renaclip.py instead.
 """
 
 import asyncio
-import os
 import sys
 import threading
 import multiprocessing
@@ -19,6 +18,7 @@ from config_loader import (
     VALID_MODIFIERS,
     load_config as load_gem_config,
 )
+from constants import ASSETS_DIR, CONFIG_PATH, TRAY_ICON_PATH, UI_LOCK_PATH
 from interfaces import launch_ui
 from gemini_client import (
     RENACLIP_PREFIX,
@@ -126,11 +126,9 @@ def _create_tray_icon_image(size: int = 64):
 
 def _load_tray_icon(size: int = 64):
     """Load tray icon from assets/renaclip_icon.png; fallback to drawn icon if missing."""
-    app_dir = os.path.dirname(os.path.abspath(__file__))
-    path = os.path.join(app_dir, "assets", "renaclip_icon.png")
     try:
-        if os.path.isfile(path):
-            img = Image.open(path).convert("RGBA")
+        if TRAY_ICON_PATH.is_file():
+            img = Image.open(str(TRAY_ICON_PATH)).convert("RGBA")
             resample = getattr(Image, "Resampling", None)
             filter_ = resample.LANCZOS if resample else getattr(Image, "LANCZOS", 1)
             img = img.resize((size, size), filter_)
@@ -147,8 +145,7 @@ def _run_tray_icon(icon):
 
 def _launch_renaclip_ui():
     """Launch RenaClip UI via interfaces. Skip if UI is already running."""
-    app_dir = Path(__file__).resolve().parent
-    launch_ui(lock_path=app_dir / ".renaclip_ui.lock")
+    launch_ui(lock_path=UI_LOCK_PATH)
 
 async def initialize_client(app: RenaClipApp):
     client = get_client(
@@ -234,8 +231,8 @@ def on_hotkey(loop, client, gem, index: int, model: str = "unspecified"):
 
 # multiprocessing.freeze_support()
 async def main_async(arg_gems: Optional[list[str]] = None):
-    config_path = Path(__file__).resolve().parent / "gem_config.json"
-    app = RenaClipApp.load_config(config_path, arg_gems)
+    print("trying to load config from", CONFIG_PATH)
+    app = RenaClipApp.load_config(CONFIG_PATH, arg_gems)
     global ui_process
     ui_process = None
     try:
@@ -290,6 +287,7 @@ async def main_async(arg_gems: Optional[list[str]] = None):
             tray_image = _load_tray_icon(64)
 
             def on_open_ui(icon, item):
+                # return
                 global ui_process
                 if ui_process is not None and ui_process.is_alive():
                     return
