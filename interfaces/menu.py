@@ -6,7 +6,7 @@ import os
 import threading
 from pathlib import Path
 
-from config_loader import load_config, save_config, VALID_MODIFIERS, AVAILABLE_MODELS
+from config_loader import load_config, save_config, VALID_MODIFIERS, AVAILABLE_MODELS, VALID_BACKENDS
 from constants import APP_ROOT, IS_DEV
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -151,31 +151,73 @@ def _ui_main(page, *, lock_path: Path | None = None):
         page.show_dialog(d)
 
     def open_settings(e=None):
+        backend = (settings.get("BACKEND") or "gemini").strip().lower()
+        if backend not in VALID_BACKENDS:
+            backend = "gemini"
+
+        # --- Hotkey (always enabled, at top) ---------------------------------
+        dd = ft.Dropdown(label="Hotkey modifier", value=settings.get("HOTKEY_MODIFIER", "ctrl"), width=450, options=[ft.dropdown.Option(m) for m in VALID_MODIFIERS])
+
+        # --- Gemini fields ---------------------------------------------------
         use_browser_cookie = settings.get("USE_BROWSER_COOKIE") is True
         pf = ft.TextField(label="GEMINI_1PSID", value=settings.get("GEMINI_1PSID", ""), width=450, password=True, can_reveal_password=True, disabled=use_browser_cookie)
         pt = ft.TextField(label="GEMINI_1PSIDTS", value=settings.get("GEMINI_1PSIDTS", ""), width=450, password=True, can_reveal_password=True, disabled=use_browser_cookie)
-        cb = ft.Checkbox(label="Log in via browser-cookie3", value=use_browser_cookie)
 
         def on_cb_change(e):
             use = cb.value
             pf.disabled = use
             pt.disabled = use
-            try:
-                pf.update()
-                pt.update()
-            except Exception:
-                pass
+            pf.update()
+            pt.update()
 
-        cb.on_change = on_cb_change
-
+        cb = ft.Checkbox(label="Log in via browser-cookie3", value=use_browser_cookie, on_change=on_cb_change)
         px = ft.TextField(label="Proxy (SOCKS5_PROXY)", value=settings.get("SOCKS5_PROXY", ""), width=450, hint_text="e.g. socks5://127.0.0.1:8889")
-        dd = ft.Dropdown(label="Hotkey modifier", value=settings.get("HOTKEY_MODIFIER", "ctrl"), width=450, options=[ft.dropdown.Option(m) for m in VALID_MODIFIERS])
-        model_dd = ft.Dropdown(label="Model", value=settings.get("MODEL", "unspecified"), width=450, options=[ft.dropdown.Option(m) for m in AVAILABLE_MODELS])
+        model_dd = ft.Dropdown(label="Model (Gemini)", value=settings.get("MODEL", "unspecified"), width=450, options=[ft.dropdown.Option(m) for m in AVAILABLE_MODELS])
+
+        gemini_section = ft.Container(
+            content=ft.Column([pf, pt, cb, px, model_dd], spacing=12),
+            disabled=backend != "gemini",
+        )
+
+        # --- OpenAI fields ---------------------------------------------------
+        ok = ft.TextField(label="OPENAI_API_KEY", value=settings.get("OPENAI_API_KEY", ""), width=450, password=True, can_reveal_password=True)
+        ou = ft.TextField(label="OPENAI_BASE_URL", value=settings.get("OPENAI_BASE_URL", ""), width=450, hint_text="https://api.openai.com/v1")
+        om = ft.Dropdown(label="OPENAI_MODEL", value=settings.get("OPENAI_MODEL", "gpt-4o"), width=360, options=[ft.dropdown.Option(settings.get("OPENAI_MODEL", "gpt-4o"))])
+        refresh_btn = ft.IconButton(icon=ft.Icons.REFRESH, tooltip="Refresh model list", on_click=lambda e: print("Refresh models — not implemented yet"))
+
+        openai_section = ft.Container(
+            content=ft.Column([ok, ou, ft.Row([om, refresh_btn], spacing=8)], spacing=12),
+            disabled=backend != "openai",
+        )
+
+        # --- Backend selector (two buttons) ----------------------------------
+        def switch_backend(to: str):
+            nonlocal backend
+            if to == backend:
+                return
+            backend = to
+            gemini_btn.style = _btn_on if backend == "gemini" else _btn_off
+            openai_btn.style = _btn_on if backend == "openai" else _btn_off
+            gemini_section.disabled = backend != "gemini"
+            openai_section.disabled = backend != "openai"
+            gemini_btn.update()
+            openai_btn.update()
+            gemini_section.update()
+            openai_section.update()
+            page.update()
+
+        _btn_on = ft.ButtonStyle(bgcolor=ft.Colors.BLUE_100, color=ft.Colors.BLUE_700, shape=ft.RoundedRectangleBorder(radius=8))
+        _btn_off = ft.ButtonStyle(bgcolor=None, color=ft.Colors.BLUE_700, shape=ft.RoundedRectangleBorder(radius=8))
+        gemini_btn = ft.ElevatedButton("Gemini", on_click=lambda e: switch_backend("gemini"), style=_btn_on if backend == "gemini" else _btn_off)
+        openai_btn = ft.ElevatedButton("OpenAI", on_click=lambda e: switch_backend("openai"), style=_btn_on if backend == "openai" else _btn_off)
+
+        backend_label = ft.Text(f"Backend: {backend.capitalize()}", weight=ft.FontWeight.W_600, size=14)
 
         def close():
             page.pop_dialog()
 
         def save_set(e):
+            settings["BACKEND"] = backend
             settings["GEMINI_1PSID"] = (pf.value or "").strip()
             settings["GEMINI_1PSIDTS"] = (pt.value or "").strip()
             settings["SOCKS5_PROXY"] = (px.value or "").strip()
@@ -184,6 +226,9 @@ def _ui_main(page, *, lock_path: Path | None = None):
             settings["HOTKEY_MODIFIER"] = m if m in VALID_MODIFIERS else "ctrl"
             model_val = (model_dd.value or "unspecified").strip()
             settings["MODEL"] = model_val if model_val in AVAILABLE_MODELS else "unspecified"
+            settings["OPENAI_API_KEY"] = (ok.value or "").strip()
+            settings["OPENAI_BASE_URL"] = (ou.value or "").strip()
+            settings["OPENAI_MODEL"] = (om.value or "gpt-4o").strip()
             save_config(gems, settings)
             close()
 
@@ -191,10 +236,28 @@ def _ui_main(page, *, lock_path: Path | None = None):
             ft.AlertDialog(
                 title=ft.Text("Settings"),
                 content=ft.Column(
-                    [ft.Text("Set GEMINI_1PSID to 'auto' to trigger browser login (may not work every time).", size=11, color=ft.Colors.GREY_600), pf, pt, cb, px, dd, model_dd, ft.Row([ft.OutlinedButton("Cancel", on_click=lambda e: close()), ft.FilledButton("Save", on_click=save_set)], alignment=ft.MainAxisAlignment.END)],
+                    [
+                        ft.Text("Hotkey", weight=ft.FontWeight.W_600, size=14),
+                        dd,
+                        ft.Divider(),
+                        backend_label,
+                        ft.Row([gemini_btn, openai_btn], spacing=8),
+                        ft.Divider(),
+                        ft.Text("Gemini", weight=ft.FontWeight.W_600, size=14),
+                        ft.Text("Set GEMINI_1PSID to 'auto' to trigger browser login (may not work every time).", size=11, color=ft.Colors.GREY_600),
+                        gemini_section,
+                        ft.Divider(),
+                        ft.Text("OpenAI", weight=ft.FontWeight.W_600, size=14),
+                        openai_section,
+                    ],
                     tight=True,
                     spacing=12,
+                    scroll=ft.ScrollMode.AUTO,
                 ),
+                actions=[
+                    ft.OutlinedButton("Cancel", on_click=lambda e: close()),
+                    ft.FilledButton("Save", on_click=save_set),
+                ],
                 modal=True,
             )
         )

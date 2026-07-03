@@ -287,7 +287,6 @@ async def main_async(arg_gems: Optional[list[str]] = None):
             tray_image = _load_tray_icon(64)
 
             def on_open_ui(icon, item):
-                # return
                 global ui_process
                 if ui_process is not None and ui_process.is_alive():
                     return

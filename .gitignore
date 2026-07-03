@@ -9,6 +9,8 @@ flet-build-template
 assets/.temp
 .temp/
 out/
+demo/
+.vscode/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

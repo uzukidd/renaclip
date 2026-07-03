@@ -15,9 +15,14 @@ DEFAULT_SETTINGS = {
     "MODEL": "unspecified",
     "COOKIE_BROWSER": "edge",
     "USE_BROWSER_COOKIE": False,  # True = login via browser-cookie3; disables manual PSID/PSIDTS
+    "BACKEND": "gemini",
+    "OPENAI_API_KEY": "",
+    "OPENAI_BASE_URL": "",
+    "OPENAI_MODEL": "gpt-4o",
 }
 
 VALID_MODIFIERS = ("ctrl", "ctrl+shift", "ctrl+alt", "ctrl+shift+alt")
+VALID_BACKENDS = ("gemini", "openai")
 AVAILABLE_MODELS = (
     "unspecified",
     "gemini-3.0-pro",
