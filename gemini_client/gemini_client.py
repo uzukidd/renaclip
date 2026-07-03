@@ -25,7 +25,7 @@ def get_client(psid=None, psidts=None, proxy=None, cookie_browser=None):
 
     if psid:
         has_psidts = "yes" if psidts else "no"
-        print(f"Using cookies: GEMINI_1PSID=***, GEMINI_1PSIDTS={has_psidts}", flush=True)
+        print(f"Using cookies: GEMINI_PSID=***, GEMINI_PSIDTS={has_psidts}", flush=True)
         if psid == "auto":
             # Use selenium to launch Edge browser and get cookies
             try:
@@ -44,7 +44,7 @@ def get_client(psid=None, psidts=None, proxy=None, cookie_browser=None):
             return GeminiClient(proxy=proxy)
         except Exception as e:
             print(
-                "Error: Set GEMINI_1PSID (and optionally GEMINI_1PSIDTS), "
+                "Error: Set GEMINI_PSID (and optionally GEMINI_PSIDTS), "
                 "or install browser-cookie3 and login at https://gemini.google.com",
                 file=sys.stderr,
             )

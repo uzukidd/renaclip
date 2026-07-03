@@ -8,17 +8,18 @@ from pathlib import Path
 from constants import CONFIG_PATH
 
 DEFAULT_SETTINGS = {
-    "GEMINI_1PSID": "",
-    "GEMINI_1PSIDTS": "",
-    "SOCKS5_PROXY": "",
+    "GEMINI_PSID": "",
+    "GEMINI_PSIDTS": "",
+    "GEMINI_PROXY": "",
+    "GEMINI_MODEL": "unspecified",
+    "GEMINI_COOKIE_BROWSER": "edge",
+    "GEMINI_USE_BROWSER_COOKIE": False,
+    "BACKEND": "openai",
     "HOTKEY_MODIFIER": "ctrl",
-    "MODEL": "unspecified",
-    "COOKIE_BROWSER": "edge",
-    "USE_BROWSER_COOKIE": False,  # True = login via browser-cookie3; disables manual PSID/PSIDTS
-    "BACKEND": "gemini",
     "OPENAI_API_KEY": "",
     "OPENAI_BASE_URL": "",
     "OPENAI_MODEL": "gpt-4o",
+    "OPENAI_MODELS": [],
 }
 
 VALID_MODIFIERS = ("ctrl", "ctrl+shift", "ctrl+alt", "ctrl+shift+alt")

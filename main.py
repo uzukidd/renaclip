@@ -55,16 +55,18 @@ class RenaClipApp:
 
     model: str
     openai_model: str
+    openai_api_key: str
+    openai_base_url: str
     hotkey_modifier: str
     backend: str
     gemini_gems: list   # Gemini API gem objects (requires client init)
-    openai_gems: list   # simple objects with .name / .prompt from config specs
+    openai_chats: list  # dicts {name, prompt} for each OpenAI gem
     specs: list[dict]
-    gemini_1psid: str | None = None
-    gemini_1psidts: str | None = None
-    socks5_proxy: str | None = None
-    cookie_browser: str | None = None
-    use_browser_cookie: bool = False
+    gemini_psid: str | None = None
+    gemini_psidts: str | None = None
+    gemini_proxy: str | None = None
+    gemini_cookie_browser: str | None = None
+    gemini_use_browser_cookie: bool = False
 
     @classmethod
     def load_config(cls, path: str | Path, arg_gems: list[str] | None = None) -> "RenaClipApp":
@@ -83,38 +85,42 @@ class RenaClipApp:
         def _str(v, default: str = "") -> str:
             return (v or "").strip() or default
 
-        gemini_1psid = _str(settings.get("GEMINI_1PSID")) or None
-        gemini_1psidts = _str(settings.get("GEMINI_1PSIDTS")) or None
-        socks5_proxy = _str(settings.get("SOCKS5_PROXY")) or None
-        cookie_browser = _str(settings.get("COOKIE_BROWSER")) or None
-        use_browser_cookie = settings.get("USE_BROWSER_COOKIE", False)
+        gemini_psid = _str(settings.get("GEMINI_PSID")) or None
+        gemini_psidts = _str(settings.get("GEMINI_PSIDTS")) or None
+        gemini_proxy = _str(settings.get("GEMINI_PROXY")) or None
+        gemini_cookie_browser = _str(settings.get("GEMINI_COOKIE_BROWSER")) or None
+        gemini_use_browser_cookie = settings.get("GEMINI_USE_BROWSER_COOKIE", False)
 
         mod = _str(settings.get("HOTKEY_MODIFIER"), "ctrl").lower()
         if mod not in VALID_MODIFIERS:
             mod = "ctrl"
 
-        model = _str(settings.get("MODEL"), "unspecified")
+        model = _str(settings.get("GEMINI_MODEL"), "unspecified")
         if model not in AVAILABLE_MODELS:
             model = "unspecified"
         openai_model = _str(settings.get("OPENAI_MODEL"), "gpt-4o")
+        openai_api_key = _str(settings.get("OPENAI_API_KEY")) or None
+        openai_base_url = _str(settings.get("OPENAI_BASE_URL")) or None
 
-        if use_browser_cookie:
-            gemini_1psid = None
-            gemini_1psidts = None
+        if gemini_use_browser_cookie:
+            gemini_psid = None
+            gemini_psidts = None
 
         return cls(
             model=model,
             openai_model=openai_model,
+            openai_api_key=openai_api_key,
+            openai_base_url=openai_base_url,
             hotkey_modifier=mod,
             backend=settings.get("BACKEND", "gemini"),
             gemini_gems=[],
-            openai_gems=[],
+            openai_chats=[],
             specs=specs,
-            gemini_1psid=gemini_1psid,
-            gemini_1psidts=gemini_1psidts,
-            socks5_proxy=socks5_proxy,
-            cookie_browser=cookie_browser,
-            use_browser_cookie=use_browser_cookie,
+            gemini_psid=gemini_psid,
+            gemini_psidts=gemini_psidts,
+            gemini_proxy=gemini_proxy,
+            gemini_cookie_browser=gemini_cookie_browser,
+            gemini_use_browser_cookie=gemini_use_browser_cookie,
         )
 
 
@@ -156,10 +162,10 @@ def _launch_renaclip_ui():
 
 async def initialize_client(app: RenaClipApp):
     client = get_client(
-        proxy=app.socks5_proxy,
-        psid=app.gemini_1psid,
-        psidts=app.gemini_1psidts,
-        cookie_browser=app.cookie_browser,
+        proxy=app.gemini_proxy,
+        psid=app.gemini_psid,
+        psidts=app.gemini_psidts,
+        cookie_browser=app.gemini_cookie_browser,
     )
     if client is None:
         raise Exception("Client is None.")
@@ -167,6 +173,10 @@ async def initialize_client(app: RenaClipApp):
     
     return client
     
+
+# (init_openai_client removed — OpenAI backend now creates a fresh client per request
+#  and sends the gem prompt as a system message inline.)
+
 
 def show_notification(title: str, message: str) -> None:
     """Show a Windows toast notification if notifier is available."""
@@ -210,15 +220,44 @@ async def process_clipboard_gemini(client, gemini_gem, text: str, model: str = "
             await delete_chat_after(client, chat)
 
 
-async def process_clipboard_openai(openai_gem, text: str, model: str = "gpt-4o") -> None:
-    """OpenAI backend: send text + prompt to OpenAI-compatible API, put response back."""
-    gem_name = getattr(openai_gem, "name", None) or "(unknown gem)"
-    prompt = getattr(openai_gem, "prompt", "")
-    # TODO: call OpenAI API with real request
-    result = f"[OpenAI] {gem_name}"
-    pyperclip.copy(result)
-    print(f"[OpenAI] Placeholder — gem: {gem_name}, model: {model}", flush=True)
-    show_notification("RenaClip", f"OpenAI: {gem_name} (placeholder).")
+async def process_clipboard_openai(app: RenaClipApp, chat_index: int, text: str) -> None:
+    """OpenAI backend: create a fresh client each time, send system prompt + user text, put response back."""
+    from openai_client import get_openai_client
+
+    if chat_index >= len(app.openai_chats):
+        show_notification("RenaClip", "No OpenAI gem at this slot.")
+        return
+
+    entry = app.openai_chats[chat_index]
+    gem_name = entry["name"]
+    prompt = entry["prompt"]
+    model = app.openai_model
+
+    client = get_openai_client(api_key=app.openai_api_key, base_url=app.openai_base_url or None)
+    if client is None:
+        show_notification("RenaClip", "OpenAI client could not be initialized.")
+        return
+
+    try:
+        messages: list = []
+        if prompt.strip():
+            messages.append({"role": "system", "content": prompt.strip()})
+        messages.append({"role": "user", "content": text})
+
+        resp = await client.chat.completions.create(model=model, messages=messages)
+        result = (resp.choices[0].message.content or "").strip()
+        pyperclip.copy(result)
+        print(f"[OpenAI] Clipboard updated by {gem_name}.", flush=True)
+        show_notification("RenaClip", f"Clipboard updated by {gem_name} (OpenAI).")
+    except Exception as e:
+        err_msg = f"[OpenAI error] {e}"
+        print(err_msg, file=sys.stderr, flush=True)
+        show_notification("RenaClip", "OpenAI processing failed.")
+    finally:
+        try:
+            await client.close()
+        except Exception:
+            pass
 
 
 def on_hotkey(loop, app: RenaClipApp, client, index: int):
@@ -239,13 +278,12 @@ def on_hotkey(loop, app: RenaClipApp, client, index: int):
         return
 
     if backend == "openai":
-        if index >= len(app.openai_gems):
+        if index >= len(app.openai_chats):
             show_notification("RenaClip", "No OpenAI gem at this slot.")
             return
-        gem = app.openai_gems[index]
-        model = app.openai_model
-        show_notification("RenaClip", f"Processing with {gem.name} (OpenAI)...")
-        asyncio.run_coroutine_threadsafe(process_clipboard_openai(gem, text, model), loop)
+        gem_name = app.openai_chats[index]["name"]
+        show_notification("RenaClip", f"Processing with {gem_name} (OpenAI)...")
+        asyncio.run_coroutine_threadsafe(process_clipboard_openai(app, index, text), loop)
     else:
         if client is None:
             show_notification("RenaClip", "Gemini client is not initialized.")
@@ -267,7 +305,12 @@ async def main_async(arg_gems: Optional[list[str]] = None):
 
     if app.backend == "openai":
         client = None
-        print("[Info] Backend is OpenAI — skipping Gemini client init.", flush=True)
+        print("[Info] Backend is OpenAI — building gem list, prompt sent per-request.", flush=True)
+        for spec in app.specs:
+            name = spec["name"]
+            prompt = spec.get("prompt", "")
+            app.openai_chats.append({"name": name, "prompt": prompt})
+        print(f"[OpenAI] {len(app.openai_chats)} gem(s) ready.", flush=True)
     else:
         try:
             client = await initialize_client(app)
@@ -282,13 +325,9 @@ async def main_async(arg_gems: Optional[list[str]] = None):
     elif not arg_gems and client is None:
         print("[Warning] Gemini Client is None, skipping delete_renaclip_gems_not_in_config.", flush=True)
 
-    # --- Build both gem lists: gemini_gems (API objects) + openai_gems (simple objects) ---
-    for spec in app.specs:
-        # OpenAI gem: always just a simple object with .name and .prompt
-        app.openai_gems.append(type("OpenAIGem", (), {"name": spec["name"], "prompt": spec.get("prompt", "")})())
-
-        # Gemini gem: only if client is available
-        if client is not None:
+    # --- Build both gem lists ---
+    if client is not None:
+        for spec in app.specs:
             name = spec["name"]
             api_name = (RENACLIP_PREFIX + name) if "prompt" in spec else name
             if "prompt" in spec:
@@ -308,8 +347,6 @@ async def main_async(arg_gems: Optional[list[str]] = None):
                     raise SystemExit(1) from e
                 print(f"  {app.hotkey_modifier}+{len(app.gemini_gems) + 1}: {gem.name!r}", flush=True)
             app.gemini_gems.append(gem)
-        else:
-            print(f"  [OpenAI] {app.hotkey_modifier}+{len(app.openai_gems)}: {spec['name']!r}", flush=True)
 
     loop = asyncio.get_running_loop()
     try:
@@ -346,11 +383,11 @@ async def main_async(arg_gems: Optional[list[str]] = None):
         except Exception as e:
             print(f"[Tray] Failed to create tray icon: {e}", file=sys.stderr, flush=True)
 
-    print(f"Backend: {app.backend}", flush=True)
+    print(f"Backend: {app.backend}, Gems: {len(app.specs)}", flush=True)
     if app.backend == "openai":
-        print(f"Using OpenAI model: {app.openai_model}", flush=True)
+        print(f"[OpenAI] {len(app.openai_chats)} gem(s), model: {app.openai_model}", flush=True)
     elif app.model != "unspecified":
-        print(f"Using Gemini model: {app.model}", flush=True)
+        print(f"[Gemini] {len(app.gemini_gems)} gem(s), model: {app.model}", flush=True)
 
     for i in range(len(app.specs)):
         key = f"{app.hotkey_modifier}+{i + 1}"
@@ -359,7 +396,10 @@ async def main_async(arg_gems: Optional[list[str]] = None):
 
     # --- Config file watcher: reload settings live when gem_config.json changes ---
     async def watch_config():
+        nonlocal client
         last_mtime = CONFIG_PATH.stat().st_mtime if CONFIG_PATH.exists() else 0
+        previous_backend = app.backend
+        previous_hotkey = app.hotkey_modifier
         while not stop_event.is_set():
             await asyncio.sleep(2)
             try:
@@ -372,22 +412,33 @@ async def main_async(arg_gems: Optional[list[str]] = None):
 
                 gems2, settings2 = load_gem_config()
                 new_backend = (settings2.get("BACKEND") or "gemini").strip().lower()
-                old_backend = app.backend
 
-                # Update app fields in-place (shared with hotkey callbacks)
-                app.backend = new_backend
-                app.hotkey_modifier = (settings2.get("HOTKEY_MODIFIER") or "ctrl").strip().lower()
-                app.model = (settings2.get("MODEL") or "unspecified").strip()
-                app.openai_model = (settings2.get("OPENAI_MODEL") or "gpt-4o").strip()
-                app.socks5_proxy = (settings2.get("SOCKS5_PROXY") or "").strip() or None
-
-                # Update specs if gems changed
+                # Update non-destructive fields live
                 app.specs = gems2
+                app.hotkey_modifier = (settings2.get("HOTKEY_MODIFIER") or "ctrl").strip().lower()
+                app.model = (settings2.get("GEMINI_MODEL") or "unspecified").strip()
+                app.openai_model = (settings2.get("OPENAI_MODEL") or "gpt-4o").strip()
+                app.openai_api_key = (settings2.get("OPENAI_API_KEY") or "").strip() or None
+                app.openai_base_url = (settings2.get("OPENAI_BASE_URL") or "").strip() or None
+                app.gemini_proxy = (settings2.get("GEMINI_PROXY") or "").strip() or None
+                app.gemini_psid = (settings2.get("GEMINI_PSID") or "").strip() or None
+                app.gemini_psidts = (settings2.get("GEMINI_PSIDTS") or "").strip() or None
 
-                print(f"[Config] Reloaded — backend={app.backend}", flush=True)
+                # Update hotkeys if modifier changed
+                if app.hotkey_modifier != previous_hotkey:
+                    previous_hotkey = app.hotkey_modifier
+                    keyboard.unhook_all()
+                    for i in range(len(app.specs)):
+                        key = f"{app.hotkey_modifier}+{i + 1}"
+                        keyboard.add_hotkey(key, lambda i=i: on_hotkey(loop, app, client, i))
 
-                if old_backend != "gemini" and new_backend == "gemini":
-                    show_notification("RenaClip", "Backend switched to Gemini. Please restart the service for full effect.")
+                print(f"[Config] Reloaded — backend={new_backend}, gems={len(app.specs)}", flush=True)
+
+                if previous_backend != new_backend:
+                    app.backend = new_backend
+                    previous_backend = new_backend
+                    show_notification("RenaClip", f"Backend changed to {new_backend.capitalize()}. Please restart the service for full effect.")
+
             except Exception as e:
                 print(f"[Config watcher] {e}", file=sys.stderr, flush=True)
 
@@ -404,8 +455,6 @@ async def main_async(arg_gems: Optional[list[str]] = None):
         keyboard.unhook_all()
         if client is not None:
             await client.close()
-        else:
-            print("[Warning] Gemini Client is None, skipping client.close().", flush=True)
         print("Exited.", flush=True)
 
 def main():
