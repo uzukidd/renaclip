@@ -2,6 +2,8 @@
 RenaClip UI host. Run the settings/gem list window via launch_ui() (non-blocking).
 """
 
+import atexit
+import flet as ft
 import os
 import threading
 from pathlib import Path
@@ -25,6 +27,7 @@ def _remove_ui_lock(lock_path: Path | None = None) -> None:
 # ---------------------------------------------------------------------------
 # UI (Flet)
 # ---------------------------------------------------------------------------
+
 
 def _ui_main(page, *, lock_path: Path | None = None):
     import flet as ft
@@ -62,7 +65,8 @@ def _ui_main(page, *, lock_path: Path | None = None):
             return
         col.controls.clear()
         if not gems:
-            col.controls.append(ft.Text("No gems yet. Click 'Add Gem' to create one.", color=ft.Colors.GREY_600))
+            col.controls.append(ft.Text(
+                "No gems yet. Click 'Add Gem' to create one.", color=ft.Colors.GREY_600))
         else:
             mod = (settings.get("HOTKEY_MODIFIER") or "ctrl").strip().lower()
             if mod not in VALID_MODIFIERS:
@@ -89,24 +93,30 @@ def _ui_main(page, *, lock_path: Path | None = None):
                                         [
                                             ft.Row(
                                                 [
-                                                    ft.Text(g.get("name", "Unnamed"), weight=ft.FontWeight.W_600, size=16),
+                                                    ft.Text(
+                                                        g.get("name", "Unnamed"), weight=ft.FontWeight.W_600, size=16),
                                                     ft.Container(
-                                                        content=ft.Text(shortcut, size=11, color=ft.Colors.WHITE),
+                                                        content=ft.Text(
+                                                            shortcut, size=11, color=ft.Colors.WHITE),
                                                         bgcolor=ft.Colors.GREEN_700,
-                                                        padding=ft.padding.symmetric(horizontal=8, vertical=4),
+                                                        padding=ft.padding.symmetric(
+                                                            horizontal=8, vertical=4),
                                                         border_radius=4,
                                                     ),
                                                 ],
                                                 spacing=8,
                                                 wrap=True,
                                             ),
-                                            ft.Text((g.get("description", "") or "")[:80] + ("..." if len(g.get("description", "")) > 80 else ""), size=12, color=ft.Colors.GREY_700),
+                                            ft.Text((g.get("description", "") or "")[
+                                                    :80] + ("..." if len(g.get("description", "")) > 80 else ""), size=12, color=ft.Colors.GREY_700),
                                         ],
                                         expand=True,
                                         alignment=ft.MainAxisAlignment.START,
                                     ),
-                                    ft.Row([ft.OutlinedButton("Edit", on_click=mk_edit(idx)), ft.OutlinedButton("Delete", on_click=mk_del(idx))], spacing=8),
-                                    ft.Container(width=24),  # Space for drag handle
+                                    ft.Row([ft.OutlinedButton("Edit", on_click=mk_edit(idx)), ft.OutlinedButton(
+                                        "Delete", on_click=mk_del(idx))], spacing=8),
+                                    # Space for drag handle
+                                    ft.Container(width=24),
                                 ],
                                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                                 spacing=12,
@@ -119,17 +129,21 @@ def _ui_main(page, *, lock_path: Path | None = None):
         col.update()
 
     def open_edit(index: int | None):
-        g = gems[index] if index is not None else {"name": "", "description": "", "prompt": ""}
-        nf = ft.TextField(label="Title", value=g.get("name", ""), width=400)
-        df = ft.TextField(label="Description", value=g.get("description", ""), width=400, multiline=True, min_lines=2)
-        pf = ft.TextField(label="Prompt", value=g.get("prompt", ""), width=400, multiline=True, min_lines=4)
+        g = gems[index] if index is not None else {
+            "name": "", "description": "", "prompt": ""}
+        nf = ft.TextField(label="Title", value=g.get("name", ""))
+        df = ft.TextField(label="Description", value=g.get(
+            "description", ""), multiline=True, min_lines=2)
+        pf = ft.TextField(label="Prompt", value=g.get(
+            "prompt", ""), multiline=True, min_lines=4)
 
         def close():
             page.pop_dialog()
 
         def save(idx, _nf, _df, _pf):
             def _save(e):
-                item = {"name": _nf.value or "Unnamed", "description": _df.value or "", "prompt": _pf.value or ""}
+                item = {"name": _nf.value or "Unnamed",
+                        "description": _df.value or "", "prompt": _pf.value or ""}
                 if idx is not None:
                     gems[idx] = item
                 else:
@@ -142,12 +156,16 @@ def _ui_main(page, *, lock_path: Path | None = None):
         d = ft.AlertDialog(
             title=ft.Text("Edit Gem" if index is not None else "Add Gem"),
             content=ft.Column(
-                [nf, df, pf, ft.Row([ft.OutlinedButton("Cancel", on_click=lambda e: close()), ft.FilledButton("Save", on_click=save(index, nf, df, pf))], alignment=ft.MainAxisAlignment.END)],
+                [nf, df, pf],
                 tight=True,
                 spacing=12,
+                scroll=ft.ScrollMode.AUTO,
             ),
+            actions=[
+                ft.OutlinedButton("Cancel", on_click=lambda e: close()),
+                ft.FilledButton("Save", on_click=save(index, nf, df, pf)),
+            ],
             modal=True,
-            scrollable=True,
         )
         page.show_dialog(d)
 
@@ -157,12 +175,15 @@ def _ui_main(page, *, lock_path: Path | None = None):
             backend = "gemini"
 
         # --- Hotkey (always enabled, at top) ---------------------------------
-        dd = ft.Dropdown(label="Hotkey modifier", value=settings.get("HOTKEY_MODIFIER", "ctrl"), width=450, options=[ft.dropdown.Option(m) for m in VALID_MODIFIERS])
+        dd = ft.Dropdown(label="Hotkey modifier", value=settings.get(
+            "HOTKEY_MODIFIER", "ctrl"), width=450, options=[ft.dropdown.Option(m) for m in VALID_MODIFIERS])
 
         # --- Gemini fields ---------------------------------------------------
         use_browser_cookie = settings.get("GEMINI_USE_BROWSER_COOKIE") is True
-        pf = ft.TextField(label="GEMINI_PSID", value=settings.get("GEMINI_PSID", ""), width=450, password=True, can_reveal_password=True, disabled=use_browser_cookie)
-        pt = ft.TextField(label="GEMINI_PSIDTS", value=settings.get("GEMINI_PSIDTS", ""), width=450, password=True, can_reveal_password=True, disabled=use_browser_cookie)
+        pf = ft.TextField(label="GEMINI_PSID", value=settings.get("GEMINI_PSID", ""),
+                          width=450, password=True, can_reveal_password=True, disabled=use_browser_cookie)
+        pt = ft.TextField(label="GEMINI_PSIDTS", value=settings.get("GEMINI_PSIDTS", ""),
+                          width=450, password=True, can_reveal_password=True, disabled=use_browser_cookie)
 
         def on_cb_change(e):
             use = cb.value
@@ -171,10 +192,14 @@ def _ui_main(page, *, lock_path: Path | None = None):
             pf.update()
             pt.update()
 
-        cb = ft.Checkbox(label="Log in via browser-cookie3", value=use_browser_cookie, on_change=on_cb_change)
-        cb2 = ft.Dropdown(label="GEMINI_COOKIE_BROWSER", value=settings.get("GEMINI_COOKIE_BROWSER", "edge"), width=450, options=[ft.dropdown.Option("edge"), ft.dropdown.Option("chrome")])
-        px = ft.TextField(label="GEMINI_PROXY", value=settings.get("GEMINI_PROXY", ""), width=450, hint_text="e.g. socks5://127.0.0.1:8889")
-        model_dd = ft.Dropdown(label="GEMINI_MODEL", value=settings.get("GEMINI_MODEL", "unspecified"), width=450, options=[ft.dropdown.Option(m) for m in AVAILABLE_MODELS])
+        cb = ft.Checkbox(label="Log in via browser-cookie3",
+                         value=use_browser_cookie, on_change=on_cb_change)
+        cb2 = ft.Dropdown(label="GEMINI_COOKIE_BROWSER", value=settings.get(
+            "GEMINI_COOKIE_BROWSER", "edge"), width=450, options=[ft.dropdown.Option("edge"), ft.dropdown.Option("chrome")])
+        px = ft.TextField(label="GEMINI_PROXY", value=settings.get(
+            "GEMINI_PROXY", ""), width=450, hint_text="e.g. socks5://127.0.0.1:8889")
+        model_dd = ft.Dropdown(label="GEMINI_MODEL", value=settings.get(
+            "GEMINI_MODEL", "unspecified"), width=450, options=[ft.dropdown.Option(m) for m in AVAILABLE_MODELS])
 
         gemini_section = ft.Container(
             content=ft.Column([pf, pt, cb, cb2, px, model_dd], spacing=12),
@@ -182,13 +207,16 @@ def _ui_main(page, *, lock_path: Path | None = None):
         )
 
         # --- OpenAI fields ---------------------------------------------------
-        ok = ft.TextField(label="OPENAI_API_KEY", value=settings.get("OPENAI_API_KEY", ""), width=450, password=True, can_reveal_password=True)
-        ou = ft.TextField(label="OPENAI_BASE_URL", value=settings.get("OPENAI_BASE_URL", ""), width=450, hint_text="https://api.openai.com/v1")
+        ok = ft.TextField(label="OPENAI_API_KEY", value=settings.get(
+            "OPENAI_API_KEY", ""), width=450, password=True, can_reveal_password=True)
+        ou = ft.TextField(label="OPENAI_BASE_URL", value=settings.get(
+            "OPENAI_BASE_URL", ""), width=450, hint_text="https://api.openai.com/v1")
         saved_models = settings.get("OPENAI_MODELS", [])
         om = ft.Dropdown(
             label="OPENAI_MODEL", value=settings.get("OPENAI_MODEL", "gpt-4o"),
             width=360,
-            options=[ft.dropdown.Option(m) for m in saved_models] if saved_models else [ft.dropdown.Option(settings.get("OPENAI_MODEL", "gpt-4o"))],
+            options=[ft.dropdown.Option(m) for m in saved_models] if saved_models else [
+                ft.dropdown.Option(settings.get("OPENAI_MODEL", "gpt-4o"))],
         )
 
         async def refresh_models(e):
@@ -201,7 +229,8 @@ def _ui_main(page, *, lock_path: Path | None = None):
                 if model_ids:
                     settings["OPENAI_MODELS"] = model_ids
                     save_config(gems, settings)
-                om.options = [ft.dropdown.Option(m) for m in model_ids] if model_ids else [ft.dropdown.Option("gpt-4o")]
+                om.options = [ft.dropdown.Option(m) for m in model_ids] if model_ids else [
+                    ft.dropdown.Option("gpt-4o")]
                 if model_ids and om.value not in model_ids:
                     om.value = model_ids[0]
                 om.update()
@@ -212,8 +241,12 @@ def _ui_main(page, *, lock_path: Path | None = None):
         refresh_btn = ft.IconButton(icon=ft.Icons.REFRESH, tooltip="Refresh model list",
                                     on_click=lambda e: page.run_task(refresh_models, e))
 
+        streaming_cb = ft.Checkbox(
+            label="Streaming mode", value=settings.get("OPENAI_STREAMING", False))
+
         openai_section = ft.Container(
-            content=ft.Column([ok, ou, ft.Row([om, refresh_btn], spacing=8)], spacing=12),
+            content=ft.Column(
+                [ok, ou, ft.Row([om, refresh_btn], spacing=8), streaming_cb], spacing=12),
             disabled=backend != "openai",
         )
 
@@ -233,12 +266,17 @@ def _ui_main(page, *, lock_path: Path | None = None):
             openai_section.update()
             page.update()
 
-        _btn_on = ft.ButtonStyle(bgcolor=ft.Colors.BLUE_100, color=ft.Colors.BLUE_700, shape=ft.RoundedRectangleBorder(radius=8))
-        _btn_off = ft.ButtonStyle(bgcolor=None, color=ft.Colors.BLUE_700, shape=ft.RoundedRectangleBorder(radius=8))
-        gemini_btn = ft.ElevatedButton("Gemini", on_click=lambda e: switch_backend("gemini"), style=_btn_on if backend == "gemini" else _btn_off)
-        openai_btn = ft.ElevatedButton("OpenAI", on_click=lambda e: switch_backend("openai"), style=_btn_on if backend == "openai" else _btn_off)
+        _btn_on = ft.ButtonStyle(
+            bgcolor=ft.Colors.BLUE_100, color=ft.Colors.BLUE_700, shape=ft.RoundedRectangleBorder(radius=8))
+        _btn_off = ft.ButtonStyle(
+            bgcolor=None, color=ft.Colors.BLUE_700, shape=ft.RoundedRectangleBorder(radius=8))
+        gemini_btn = ft.ElevatedButton("Gemini Web (unstable)", on_click=lambda e: switch_backend(
+            "gemini"), style=_btn_on if backend == "gemini" else _btn_off)
+        openai_btn = ft.ElevatedButton("OpenAI", on_click=lambda e: switch_backend(
+            "openai"), style=_btn_on if backend == "openai" else _btn_off)
 
-        backend_label = ft.Text(f"Backend: {backend.capitalize()}", weight=ft.FontWeight.W_600, size=14)
+        backend_label = ft.Text(
+            f"Backend: {backend.capitalize()}", weight=ft.FontWeight.W_600, size=14)
 
         def close():
             page.pop_dialog()
@@ -257,6 +295,7 @@ def _ui_main(page, *, lock_path: Path | None = None):
             settings["OPENAI_API_KEY"] = (ok.value or "").strip()
             settings["OPENAI_BASE_URL"] = (ou.value or "").strip()
             settings["OPENAI_MODEL"] = (om.value or "gpt-4o").strip()
+            settings["OPENAI_STREAMING"] = bool(streaming_cb.value)
             save_config(gems, settings)
             close()
 
@@ -269,14 +308,16 @@ def _ui_main(page, *, lock_path: Path | None = None):
                         dd,
                         ft.Divider(),
                         backend_label,
-                        ft.Row([gemini_btn, openai_btn], spacing=8),
-                        ft.Divider(),
-                        ft.Text("Gemini", weight=ft.FontWeight.W_600, size=14),
-                        ft.Text("Set GEMINI_PSID to 'auto' to trigger browser login (may not work every time).", size=11, color=ft.Colors.GREY_600),
-                        gemini_section,
+                        ft.Row([openai_btn, gemini_btn], spacing=8),
                         ft.Divider(),
                         ft.Text("OpenAI", weight=ft.FontWeight.W_600, size=14),
                         openai_section,
+                        ft.Divider(),
+                        ft.Text("Gemini", weight=ft.FontWeight.W_600, size=14),
+                        ft.Text("Set GEMINI_PSID to 'auto' to trigger browser login (may not work every time).",
+                                size=11, color=ft.Colors.GREY_600),
+                        gemini_section,
+
                     ],
                     tight=True,
                     spacing=12,
@@ -291,19 +332,20 @@ def _ui_main(page, *, lock_path: Path | None = None):
         )
 
     page.add(
-        ft.Row([ft.Text(f"{display_name} - {APP_ROOT}", size=24, weight=ft.FontWeight.BOLD), ft.Container(expand=True), ft.OutlinedButton("Settings", on_click=open_settings), ft.FilledButton("Add Gem", on_click=lambda e: open_edit(None))], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+        ft.Row([ft.Text(f"{display_name} - {APP_ROOT}", size=24, weight=ft.FontWeight.BOLD), ft.Container(expand=True), ft.OutlinedButton("Settings",
+               on_click=open_settings), ft.FilledButton("Add Gem", on_click=lambda e: open_edit(None))], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
 
-        ft.Text("Restart to apply gems and settings.", size=11),
+        ft.Text("Restart to initialize gemini client when backend changed.", size=11),
         ft.Divider(),
         ft.Container(
-            content=ft.ReorderableListView(ref=gem_list_ref, on_reorder=on_reorder, spacing=8, expand=True),
+            content=ft.ReorderableListView(
+                ref=gem_list_ref, on_reorder=on_reorder, spacing=8, expand=True),
             expand=True,
         ),
     )
     rebuild_gems()
 
-import atexit
-import flet as ft
+
 def launch_ui(lock_path: Path | None = None) -> None:
     """
     Start the RenaClip UI window in a background thread (non-blocking).

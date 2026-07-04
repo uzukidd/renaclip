@@ -57,6 +57,7 @@ class RenaClipApp:
     openai_model: str
     openai_api_key: str
     openai_base_url: str
+    openai_streaming: bool
     hotkey_modifier: str
     backend: str
     gemini_gems: list   # Gemini API gem objects (requires client init)
@@ -101,6 +102,7 @@ class RenaClipApp:
         openai_model = _str(settings.get("OPENAI_MODEL"), "gpt-4o")
         openai_api_key = _str(settings.get("OPENAI_API_KEY")) or None
         openai_base_url = _str(settings.get("OPENAI_BASE_URL")) or None
+        openai_streaming = settings.get("OPENAI_STREAMING", False)
 
         if gemini_use_browser_cookie:
             gemini_psid = None
@@ -111,6 +113,7 @@ class RenaClipApp:
             openai_model=openai_model,
             openai_api_key=openai_api_key,
             openai_base_url=openai_base_url,
+            openai_streaming=openai_streaming,
             hotkey_modifier=mod,
             backend=settings.get("BACKEND", "gemini"),
             gemini_gems=[],
@@ -244,10 +247,22 @@ async def process_clipboard_openai(app: RenaClipApp, chat_index: int, text: str)
             messages.append({"role": "system", "content": prompt.strip()})
         messages.append({"role": "user", "content": text})
 
-        resp = await client.chat.completions.create(model=model, messages=messages)
-        result = (resp.choices[0].message.content or "").strip()
-        pyperclip.copy(result)
-        print(f"[OpenAI] Clipboard updated by {gem_name}.", flush=True)
+        if app.openai_streaming:
+            # Stream chunks and progressively update clipboard
+            stream = await client.chat.completions.create(model=model, messages=messages, stream=True)
+            accumulated = ""
+            async for chunk in stream:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    accumulated += delta
+                    pyperclip.copy(accumulated)
+            result = accumulated
+            print(f"[OpenAI] Streamed & clipboard updated by {gem_name} ({len(result)} chars).", flush=True)
+        else:
+            resp = await client.chat.completions.create(model=model, messages=messages)
+            result = (resp.choices[0].message.content or "").strip()
+            pyperclip.copy(result)
+            print(f"[OpenAI] Clipboard updated by {gem_name}.", flush=True)
         show_notification("RenaClip", f"Clipboard updated by {gem_name} (OpenAI).")
     except Exception as e:
         err_msg = f"[OpenAI error] {e}"
@@ -263,6 +278,12 @@ async def process_clipboard_openai(app: RenaClipApp, chat_index: int, text: str)
 def on_hotkey(loop, app: RenaClipApp, client, index: int):
     """Called from keyboard thread: read clipboard, dispatch by backend to correct gem."""
     backend = app.backend
+
+    # Bounds-check against whichever gem list is active
+    max_gems = len(app.openai_chats) if backend == "openai" else len(app.gemini_gems)
+    if index < 0 or index >= max_gems:
+        return
+
     print(f"[Hotkey {index + 1}] backend={backend}", flush=True)
 
     try:
@@ -278,19 +299,10 @@ def on_hotkey(loop, app: RenaClipApp, client, index: int):
         return
 
     if backend == "openai":
-        if index >= len(app.openai_chats):
-            show_notification("RenaClip", "No OpenAI gem at this slot.")
-            return
         gem_name = app.openai_chats[index]["name"]
         show_notification("RenaClip", f"Processing with {gem_name} (OpenAI)...")
         asyncio.run_coroutine_threadsafe(process_clipboard_openai(app, index, text), loop)
     else:
-        if client is None:
-            show_notification("RenaClip", "Gemini client is not initialized.")
-            return
-        if index >= len(app.gemini_gems):
-            show_notification("RenaClip", "No Gemini gem at this slot.")
-            return
         gem = app.gemini_gems[index]
         model = app.model
         show_notification("RenaClip", f"Processing with {gem.name} (Gemini)...")
@@ -389,10 +401,12 @@ async def main_async(arg_gems: Optional[list[str]] = None):
     elif app.model != "unspecified":
         print(f"[Gemini] {len(app.gemini_gems)} gem(s), model: {app.model}", flush=True)
 
-    for i in range(len(app.specs)):
+    # Register hotkeys 1-9 unconditionally; on_hotkey checks if a gem exists at that slot
+    MAX_HOTKEYS = 9
+    for i in range(MAX_HOTKEYS):
         key = f"{app.hotkey_modifier}+{i + 1}"
         keyboard.add_hotkey(key, lambda i=i: on_hotkey(loop, app, client, i))
-    print(f"Listening: {app.hotkey_modifier}+1..{app.hotkey_modifier}+{len(app.specs)} = clipboard->gem->clipboard. Exit via tray menu.", flush=True)
+    print(f"Listening: {app.hotkey_modifier}+1..{app.hotkey_modifier}+{MAX_HOTKEYS}. {len(app.specs)} gem(s) active. Exit via tray menu.", flush=True)
 
     # --- Config file watcher: reload settings live when gem_config.json changes ---
     async def watch_config():
@@ -413,13 +427,18 @@ async def main_async(arg_gems: Optional[list[str]] = None):
                 gems2, settings2 = load_gem_config()
                 new_backend = (settings2.get("BACKEND") or "gemini").strip().lower()
 
-                # Update non-destructive fields live
+                # Keep app.specs and openai_chats in sync with config gems
                 app.specs = gems2
+                app.openai_chats.clear()
+                for spec in gems2:
+                    app.openai_chats.append({"name": spec["name"], "prompt": spec.get("prompt", "")})
+
                 app.hotkey_modifier = (settings2.get("HOTKEY_MODIFIER") or "ctrl").strip().lower()
                 app.model = (settings2.get("GEMINI_MODEL") or "unspecified").strip()
                 app.openai_model = (settings2.get("OPENAI_MODEL") or "gpt-4o").strip()
                 app.openai_api_key = (settings2.get("OPENAI_API_KEY") or "").strip() or None
                 app.openai_base_url = (settings2.get("OPENAI_BASE_URL") or "").strip() or None
+                app.openai_streaming = settings2.get("OPENAI_STREAMING", False)
                 app.gemini_proxy = (settings2.get("GEMINI_PROXY") or "").strip() or None
                 app.gemini_psid = (settings2.get("GEMINI_PSID") or "").strip() or None
                 app.gemini_psidts = (settings2.get("GEMINI_PSIDTS") or "").strip() or None
@@ -428,7 +447,7 @@ async def main_async(arg_gems: Optional[list[str]] = None):
                 if app.hotkey_modifier != previous_hotkey:
                     previous_hotkey = app.hotkey_modifier
                     keyboard.unhook_all()
-                    for i in range(len(app.specs)):
+                    for i in range(MAX_HOTKEYS):
                         key = f"{app.hotkey_modifier}+{i + 1}"
                         keyboard.add_hotkey(key, lambda i=i: on_hotkey(loop, app, client, i))
 

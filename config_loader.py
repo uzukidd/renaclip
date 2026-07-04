@@ -20,6 +20,7 @@ DEFAULT_SETTINGS = {
     "OPENAI_BASE_URL": "",
     "OPENAI_MODEL": "gpt-4o",
     "OPENAI_MODELS": [],
+    "OPENAI_STREAMING": False,
 }
 
 VALID_MODIFIERS = ("ctrl", "ctrl+shift", "ctrl+alt", "ctrl+shift+alt")
