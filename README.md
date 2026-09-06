@@ -2,9 +2,11 @@
 
 ![renaclip_logo](README.assets/renaclip_logo.png)
 
-**R**eal-time **E**nhanced **N**eural **A**ssistant for **Clip**board — use **Gemini / OpenAI / DeepSeek**-powered "gems" to process clipboard text with global hotkeys.
+**R**eal-time **E**nhanced **N**eural **A**ssistant for **Clip**board — use **Gemini / OpenAI / DeepSeek**-powered "gems/skills" to process clipboard text with global hotkeys.
 
-![Notepad_6MNS1et3W5](README.assets/Notepad_6MNS1et3W5.gif)
+<img src="README.assets/demo_0.gif" style="zoom:45%;" />
+
+<img src="README.assets/demo_1.gif" style="zoom:45%;" />
 
 ---
 
@@ -23,9 +25,9 @@
 
 ## Overview
 
-RenaClip runs a clipboard service in the system tray. You define **gems** (each with a name, description, and system prompt). When you press a hotkey (e.g. **Ctrl+1**, **Ctrl+2**), the current clipboard content is sent to the corresponding gem; the model's reply is written back to the clipboard and a notification is shown.
+RenaClip runs a clipboard service in the system tray. You define **skills** (each with a name, description, and system prompt). When you press a hotkey (e.g. **Ctrl+1**, **Ctrl+2**), the current clipboard content is sent to the corresponding gem; the model's reply is written back to the clipboard and a notification is shown.
 
-- **UI**: Manage gems and settings via a desktop app (Flet).
+- **UI**: Manage skills and settings via a desktop app (Flet).
 - **Tray**: Service runs in the background; left-click the tray icon to open the UI, or use the menu to exit.
 
 ### Supported Backends
@@ -46,14 +48,6 @@ RenaClip runs a clipboard service in the system tray. You define **gems** (each 
 pip install -r requirements.txt
 ```
 
-### Gemini Backend
-
-You need valid Gemini cookies configured in **Settings**:
-
-- `GEMINI_PSID` and `GEMINI_PSIDTS` — from your Gemini session cookies
-- Or enable **Log in via browser-cookie3** if already logged into [Gemini](https://gemini.google.com) in your browser
-- Set `GEMINI_PSID` to `auto` to trigger a browser-based login flow (opens Edge/Chrome)
-
 ### OpenAI-compatible Backend (eg. ChatGPT/DeepSeek)
 
 You need:
@@ -61,6 +55,14 @@ You need:
 - `OPENAI_API_KEY` — your API key
 - `OPENAI_BASE_URL` — endpoint URL (default: `https://api.openai.com/v1`; use `https://api.deepseek.com` for DeepSeek, `http://localhost:11434/v1` for Ollama, etc.)
 - `OPENAI_MODEL` — model ID (click the refresh button to fetch available models from the endpoint)
+
+### Gemini Backend (Unstable)
+
+You need valid Gemini cookies configured in **Settings**:
+
+- `GEMINI_PSID` and `GEMINI_PSIDTS` — from your Gemini session cookies
+- Or enable **Log in via browser-cookie3** if already logged into [Gemini](https://gemini.google.com) in your browser
+- Set `GEMINI_PSID` to `auto` to trigger a browser-based login flow (opens Edge/Chrome)
 
 ---
 
@@ -78,11 +80,11 @@ You need:
 
 2. **Open the UI**
 
-   Left-click the RenaClip tray icon, or choose **Open menu** from the tray menu.If the menu is already open, another window is not started.
+   Left-click the RenaClip tray icon, or choose **Open menu** from the tray menu. If the menu is already open, another window is not started.
 
 3. **Use hotkeys**
 
-   Copy text, then press the modifier + number for a gem (e.g. **Ctrl+1** for the first gem). The result replaces the clipboard content.
+   Copy text, then press the modifier + number for a gem (e.g. **Ctrl+1** for the first skill). The result replaces the clipboard content.
 
 4. **Exit**
    Right-click the tray icon → **Exit**.
@@ -95,11 +97,13 @@ You need:
 
 Gems list, **Settings**, and **Add Gem**. Each gem can be edited or deleted. Drag to reorder.
 
+The main UI and screenshot overlay share the fixed dark/pink design tokens in `interfaces/theme.py`: palette, Segoe UI typography, corner radius, spacing, and scrollbar styling. Edit that file to keep both toolkits aligned; the main UI no longer follows the system light/dark setting.
+
 ![Main interface](README.assets/main.png)
 
-### 2. Edit / Add Gem
+### 2. Edit / Add Skill
 
-Set the gem **name**, **description**, and **prompt** (system instruction).
+Set the skill **name**, **description**, and **prompt** (system instruction). Enable **Web search** to include `tools=[{"type": "web_search"}]` in that gem's OpenAI request; the selected provider must support this tool type.
 
 ![Edit Gem](README.assets/edit.png)
 
@@ -107,6 +111,7 @@ Set the gem **name**, **description**, and **prompt** (system instruction).
 
 Switch between **Gemini** and **OpenAI** backends. Each section shows the relevant configuration fields for the selected backend. A refresh button next to the OpenAI model dropdown fetches available models from your API endpoint.
 
+- **Screenshot QA** — configure screenshot settings
 - **Hotkey modifier** — keyboard modifier for shortcuts (e.g. `Ctrl+Shift+1`)
 - **Backend** — toggle between Gemini and OpenAI-compatible
 
@@ -114,11 +119,17 @@ Switch between **Gemini** and **OpenAI** backends. Each section shows the releva
 
 ![Settings](README.assets/settings_1.png)
 
+### 4. Screenshot QA
+
+Enable **Screenshot Q&A** in **Settings** and save. Press the configured hotkey modifier plus `0` (for example, `Ctrl+Shift+0`) to start it. Drag to select a region of the screen, then type a question in the panel on the right and press **Enter** to send; use **Shift+Enter** for a new line. A thinking indicator appears while the answer is being generated, and the completed answer can be scrolled. Click a completed Q&A bubble to edit and resubmit the question. Click outside the selected region and Q&A bubbles to select a new screenshot, or press **Esc** to exit.
+
+![image-20260906120554904](README.assets/image-20260906120554904.png)
+
 ---
 
 ## Configuration
 
-- **Gems and settings** are stored in `gem_config.json` (created on first save).
+- **Skills and settings** are stored in `gem_config.json` (created on first save).
 - **Switching backends requires restarting the service** — a notification will remind you.
 - Hotkey modifier and model selections are live-reloaded on save.
 
