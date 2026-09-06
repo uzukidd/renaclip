@@ -18,7 +18,7 @@ APP_ROOT = _get_app_root()
 
 # # Environment flags
 # print(getattr(sys, "FLET_PLATFORM", None))
-IS_DEV = True
+IS_DEV = False
 
 # Config and data
 CONFIG_PATH = APP_ROOT / "gem_config.json"

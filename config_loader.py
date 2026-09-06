@@ -16,15 +16,35 @@ DEFAULT_SETTINGS = {
     "GEMINI_USE_BROWSER_COOKIE": False,
     "BACKEND": "openai",
     "HOTKEY_MODIFIER": "ctrl",
+    "SCREENSHOT_QA_ENABLED": False,
+    "SCREENSHOT_QA_WEB_SEARCH": False,
     "OPENAI_API_KEY": "",
     "OPENAI_BASE_URL": "",
     "OPENAI_MODEL": "gpt-4o",
+    "OPENAI_REASONING_EFFORT": "default",
     "OPENAI_MODELS": [],
     "OPENAI_STREAMING": False,
+    "OPENAI_PROVIDERS": [],
+    "OPENAI_ACTIVE_PROVIDER": "",
 }
 
 VALID_MODIFIERS = ("ctrl", "ctrl+shift", "ctrl+alt", "ctrl+shift+alt")
 VALID_BACKENDS = ("gemini", "openai")
+VALID_OPENAI_INTERFACES = ("chat_completions", "responses")
+VALID_REASONING_EFFORTS = ("default", "low", "medium", "high")
+
+
+def normalize_reasoning_effort(value) -> str:
+    value = str(value or "default").strip().lower()
+    return value if value in VALID_REASONING_EFFORTS else "default"
+
+
+def reasoning_request_options(interface: str, effort) -> dict:
+    effort = normalize_reasoning_effort(effort)
+    if effort == "default":
+        return {}
+    return {"reasoning": {"effort": effort}} if interface == "responses" else {"reasoning_effort": effort}
+
 AVAILABLE_MODELS = (
     "unspecified",
     "gemini-3.0-pro",
@@ -51,6 +71,94 @@ DEFAULT_GEMS = [
 ]
 
 
+def _clean_model_ids(value) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result = []
+    for model in value:
+        model_id = str(model or "").strip()
+        if model_id and model_id not in result:
+            result.append(model_id)
+    return result
+
+
+def normalize_openai_providers(settings: dict) -> list[dict]:
+    """Return normalized providers and migrate the previous single-provider format."""
+    raw_providers = settings.get("OPENAI_PROVIDERS")
+    providers: list[dict] = []
+    if isinstance(raw_providers, list):
+        for index, raw in enumerate(raw_providers):
+            if not isinstance(raw, dict):
+                continue
+            name = str(raw.get("name") or "").strip() or f"Provider {index + 1}"
+            models = _clean_model_ids(raw.get("models"))
+            model = str(raw.get("model") or "").strip()
+            if model and model not in models:
+                models.insert(0, model)
+            api_interface = str(
+                raw.get("api_interface") or raw.get("api_type") or "chat_completions"
+            ).strip().lower()
+            if api_interface not in VALID_OPENAI_INTERFACES:
+                api_interface = "chat_completions"
+            providers.append({
+                "name": name,
+                "api_key": str(raw.get("api_key") or "").strip(),
+                "base_url": str(raw.get("base_url") or "").strip(),
+                "api_interface": api_interface,
+                "model": model or (models[0] if models else "gpt-4o"),
+                "models": models,
+                "streaming": bool(raw.get("streaming", settings.get("OPENAI_STREAMING", False))),
+            })
+
+    if not providers:
+        models = _clean_model_ids(settings.get("OPENAI_MODELS"))
+        legacy_model = str(settings.get("OPENAI_MODEL") or "").strip() or "gpt-4o"
+        if legacy_model not in models:
+            models.insert(0, legacy_model)
+        providers = [{
+            "name": "Default",
+            "api_key": str(settings.get("OPENAI_API_KEY") or "").strip(),
+            "base_url": str(settings.get("OPENAI_BASE_URL") or "").strip(),
+            "api_interface": "chat_completions",
+            "model": legacy_model,
+            "models": models,
+            "streaming": bool(settings.get("OPENAI_STREAMING", False)),
+        }]
+
+    # Keep names unique so they can safely be used as selector values.
+    used_names: set[str] = set()
+    for index, provider in enumerate(providers):
+        base_name = provider["name"]
+        name = base_name
+        suffix = 2
+        while name in used_names:
+            name = f"{base_name} ({suffix})"
+            suffix += 1
+        provider["name"] = name
+        used_names.add(name)
+
+    active_name = str(settings.get("OPENAI_ACTIVE_PROVIDER") or "").strip()
+    if active_name not in used_names:
+        active_name = providers[0]["name"]
+    settings["OPENAI_PROVIDERS"] = providers
+    settings["OPENAI_ACTIVE_PROVIDER"] = active_name
+
+    # Mirror the active provider into legacy keys for older callers/configs.
+    active = next(p for p in providers if p["name"] == active_name)
+    settings["OPENAI_API_KEY"] = active["api_key"]
+    settings["OPENAI_BASE_URL"] = active["base_url"]
+    settings["OPENAI_MODEL"] = active["model"]
+    settings["OPENAI_MODELS"] = list(active["models"])
+    settings["OPENAI_STREAMING"] = active["streaming"]
+    return providers
+
+
+def get_active_openai_provider(settings: dict) -> dict:
+    providers = normalize_openai_providers(settings)
+    active_name = settings["OPENAI_ACTIVE_PROVIDER"]
+    return next(provider for provider in providers if provider["name"] == active_name)
+
+
 
 def load_config() -> tuple[list[dict], dict]:
     gems: list[dict] = []
@@ -72,9 +180,11 @@ def load_config() -> tuple[list[dict], dict]:
             pass
     if not gems:
         gems = list(DEFAULT_GEMS)
+    normalize_openai_providers(settings)
     return gems, settings
 
 
 def save_config(gems: list[dict], settings: dict) -> None:
+    normalize_openai_providers(settings)
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump({"gems": gems, "settings": settings}, f, ensure_ascii=False, indent=2)

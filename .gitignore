@@ -10,7 +10,9 @@ assets/.temp
 .temp/
 out/
 demo/
+tests/
 .vscode/
+development.file
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
