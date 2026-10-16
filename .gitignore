@@ -10,9 +10,11 @@ assets/.temp
 .temp/
 out/
 demo/
-tests/
+# Regression tests are versioned.
 .vscode/
 development.file
+review/
+flet-build-template/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -47,6 +49,7 @@ MANIFEST
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+!RenaClip.spec
 
 # Installer logs
 pip-log.txt

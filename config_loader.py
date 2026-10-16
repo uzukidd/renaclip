@@ -161,7 +161,7 @@ def get_active_openai_provider(settings: dict) -> dict:
 
 
 def load_config() -> tuple[list[dict], dict]:
-    gems: list[dict] = []
+    gems: list[dict] = list(DEFAULT_GEMS)
     settings = dict(DEFAULT_SETTINGS)
     if CONFIG_PATH.exists():
         try:
@@ -178,7 +178,7 @@ def load_config() -> tuple[list[dict], dict]:
                 json.dump({"gems": gems, "settings": settings}, f, ensure_ascii=False, indent=2)
         except OSError:
             pass
-    if not gems:
+    if not isinstance(gems, list):
         gems = list(DEFAULT_GEMS)
     normalize_openai_providers(settings)
     return gems, settings
