@@ -16,6 +16,7 @@ DEFAULT_SETTINGS = {
     "GEMINI_USE_BROWSER_COOKIE": False,
     "BACKEND": "openai",
     "HOTKEY_MODIFIER": "ctrl",
+    "START_WITH_WINDOWS": False,
     "SCREENSHOT_QA_ENABLED": False,
     "SCREENSHOT_QA_WEB_SEARCH": False,
     "OPENAI_API_KEY": "",

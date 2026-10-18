@@ -132,7 +132,7 @@ class MaterialBridge(QObject):
     def updateSettingsDraft(self, value):
         if self._draft is None:
             return
-        allowed = ('BACKEND','HOTKEY_MODIFIER','SCREENSHOT_QA_ENABLED','SCREENSHOT_QA_WEB_SEARCH',
+        allowed = ('START_WITH_WINDOWS','BACKEND','HOTKEY_MODIFIER','SCREENSHOT_QA_ENABLED','SCREENSHOT_QA_WEB_SEARCH',
                    'GEMINI_PSID','GEMINI_PSIDTS','GEMINI_PROXY','GEMINI_MODEL',
                    'GEMINI_COOKIE_BROWSER','GEMINI_USE_BROWSER_COOKIE')
         for key in allowed:
@@ -150,7 +150,22 @@ class MaterialBridge(QObject):
             return self._fail('Unsupported backend.')
         if self._draft.get('GEMINI_MODEL') not in AVAILABLE_MODELS:
             self._draft['GEMINI_MODEL'] = 'unspecified'
+        from interfaces.autostart import read_startup_command, write_startup_command, startup_command
+        desired = bool(self._draft.get('START_WITH_WINDOWS', False))
+        apply_startup = desired or desired != bool(self._settings.get('START_WITH_WINDOWS', False))
+        previous_command = None
+        if apply_startup:
+            try:
+                previous_command = read_startup_command()
+                write_startup_command(startup_command() if desired else None)
+            except OSError:
+                return self._fail('Could not update Windows startup. Check your user permissions.')
         result = self._persist(self._skills, self._draft)
+        if not result and apply_startup:
+            try:
+                write_startup_command(previous_command)
+            except OSError:
+                self._fail('Configuration could not be saved and startup could not be restored. Check Windows Startup apps.')
         if result:
             self.cancelSettings()
         return result

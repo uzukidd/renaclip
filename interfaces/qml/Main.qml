@@ -39,6 +39,7 @@ ApplicationWindow {
         bridge.clearError(); localError = ""
         var s = bridge.beginSettings()
         hotkeyField.currentIndex = Math.max(0, hotkeyField.model.indexOf(text(s.HOTKEY_MODIFIER) || "ctrl"))
+        startupToggle.checked = !!s.START_WITH_WINDOWS
         screenshotToggle.checked = !!s.SCREENSHOT_QA_ENABLED; searchToggle.checked = !!s.SCREENSHOT_QA_WEB_SEARCH
         draftBackend = text(s.BACKEND) || "openai"
         psid.text = text(s.GEMINI_PSID); psidts.text = text(s.GEMINI_PSIDTS)
@@ -289,7 +290,7 @@ ApplicationWindow {
         cancelAction: function() { bridge.cancelSettings(); root.localError = "" }
         commit: function() {
             root.localError = ""
-            bridge.updateSettingsDraft({HOTKEY_MODIFIER:hotkeyField.currentText, BACKEND:root.draftBackend,
+            bridge.updateSettingsDraft({START_WITH_WINDOWS:startupToggle.checked, HOTKEY_MODIFIER:hotkeyField.currentText, BACKEND:root.draftBackend,
                 SCREENSHOT_QA_ENABLED:screenshotToggle.checked, SCREENSHOT_QA_WEB_SEARCH:searchToggle.checked,
                 GEMINI_PSID:psid.text, GEMINI_PSIDTS:psidts.text, GEMINI_PROXY:proxyField.text,
                 GEMINI_USE_BROWSER_COOKIE:browserCookie.checked, GEMINI_COOKIE_BROWSER:browserField.currentText,
@@ -299,6 +300,10 @@ ApplicationWindow {
         contentItem: ScrollView { clip: true; contentWidth: availableWidth
             ColumnLayout { width: settingsDialog.availableWidth; spacing: 12
                 ErrorLabel {}
+                Label { text: "Startup"; font.weight: Font.DemiBold }
+                CheckBox { id: startupToggle; objectName: "startWithWindows"; implicitHeight: 34; text: "Start with Windows" }
+                Label { text: "Launch in the system tray when you sign in."; font.pixelSize: 11; color: paletteTokens.muted; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                Rule {}
                 Label { text: "Hotkey"; font.weight: Font.DemiBold }
                 SelectField { id: hotkeyField; objectName: "hotkeyModifier"; Layout.fillWidth: true; label: "Hotkey modifier"; model: ["ctrl", "ctrl+shift", "ctrl+alt", "ctrl+shift+alt"] }
                 Rule {}

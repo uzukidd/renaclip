@@ -121,6 +121,7 @@ Set the skill **name**, **description**, and **prompt** (system instruction). En
 
 Switch between **Gemini** and **OpenAI** backends. Each section shows the relevant configuration fields for the selected backend. A refresh button next to the OpenAI model dropdown fetches available models from your API endpoint.
 
+- **Start with Windows** — launch minimized to the tray when the current user signs in. Applied only on **Save**; unchecking and saving removes the startup entry. It uses the current-user Windows Run key and requires no administrator privileges. Source runs register the environment's Python interpreter and absolute script path; packaged runs register the EXE. If you move the app or switch from source to EXE, enable/save again from the new location to update the command.
 - **Screenshot QA** — configure screenshot settings
 - **Hotkey modifier** — keyboard modifier for shortcuts (e.g. `Ctrl+Shift+1`)
 - **Backend** — toggle between Gemini and OpenAI-compatible
