@@ -1,9 +1,4 @@
-"""Shared dark/pink design tokens for Flet and the native screenshot overlay.
-
-Keep palette and dimensions here; toolkit-specific adapters consume these values.
-Flet is imported lazily so the native overlay does not need it for its theme.
-"""
-
+"""Shared dark/pink design tokens and Qt widget styling."""
 BACKGROUND = "#19171d"
 SURFACE = "#242329"
 SURFACE_RAISED = "#302b33"
@@ -16,7 +11,6 @@ OUTLINE = "#786773"
 DIVIDER = "#443943"
 DISABLED = "#847581"
 ERROR = "#ffb4ab"
-
 FONT_FAMILY = "Segoe UI"
 BODY_SIZE = 14
 RADIUS = 8
@@ -26,74 +20,46 @@ SCROLLBAR_WIDTH = 10
 SELECTION_WIDTH = 4
 
 
-def apply_flet_theme(page):
-    """Apply one explicit dark theme to the page and all its dialogs."""
-    import flet as ft
-
-    shape = ft.RoundedRectangleBorder(radius=RADIUS)
-    text_style = ft.TextStyle(font_family=FONT_FAMILY, size=BODY_SIZE,
-                              color=TEXT, letter_spacing=0)
-    theme = ft.Theme(
-        color_scheme_seed=ACCENT,
-        font_family=FONT_FAMILY,
-        use_material3=True,
-        color_scheme=ft.ColorScheme(
-            primary=ACCENT_LIGHT, on_primary=BACKGROUND,
-            primary_container=SURFACE_ACCENT, on_primary_container=ACCENT_LIGHT,
-            secondary=ACCENT_LIGHT, on_secondary=BACKGROUND,
-            secondary_container=SURFACE_ACCENT, on_secondary_container=TEXT,
-            tertiary=ACCENT_LIGHT, on_tertiary=BACKGROUND,
-            tertiary_container=SURFACE_RAISED, on_tertiary_container=TEXT,
-            surface=SURFACE, on_surface=TEXT, on_surface_variant=TEXT_MUTED,
-            surface_dim=BACKGROUND, surface_bright=SURFACE_RAISED,
-            surface_container_lowest=BACKGROUND, surface_container_low=SURFACE,
-            surface_container=SURFACE, surface_container_high=SURFACE_RAISED,
-            surface_container_highest=SURFACE_RAISED, surface_tint=SURFACE,
-            outline=OUTLINE, outline_variant=DIVIDER,
-            error=ERROR, on_error=BACKGROUND,
-        ),
-        scaffold_bgcolor=BACKGROUND, canvas_color=SURFACE, card_bgcolor=SURFACE,
-        divider_color=DIVIDER, disabled_color=DISABLED, hint_color=TEXT_MUTED,
-        text_theme=ft.TextTheme(body_medium=text_style, body_large=text_style),
-        card_theme=ft.CardTheme(color=SURFACE, elevation=0, shape=shape),
-        dialog_theme=ft.DialogTheme(
-            bgcolor=SURFACE, shape=shape,
-            title_text_style=ft.TextStyle(color=TEXT, size=20, font_family=FONT_FAMILY,
-                                         weight=ft.FontWeight.W_600, letter_spacing=0),
-            content_text_style=text_style,
-        ),
-        filled_button_theme=ft.FilledButtonTheme(style=ft.ButtonStyle(
-            bgcolor={ft.ControlState.DEFAULT: ACCENT, ft.ControlState.DISABLED: SURFACE_RAISED},
-            color={ft.ControlState.DEFAULT: TEXT, ft.ControlState.DISABLED: DISABLED},
-            shape=shape,
-        )),
-        outlined_button_theme=ft.OutlinedButtonTheme(style=ft.ButtonStyle(
-            color={ft.ControlState.DEFAULT: ACCENT_LIGHT, ft.ControlState.DISABLED: DISABLED},
-            shape=shape,
-        )),
-        scrollbar_theme=ft.ScrollbarTheme(
-            thumb_color={ft.ControlState.DEFAULT: ACCENT, ft.ControlState.HOVERED: ACCENT_LIGHT,
-                         ft.ControlState.DRAGGED: ACCENT_LIGHT},
-            track_color=SURFACE, track_border_color=SURFACE,
-            thickness=SCROLLBAR_WIDTH, radius=RADIUS, interactive=True,
-        ),
-    )
-    page.theme_mode = ft.ThemeMode.DARK
-    page.theme = theme
-    page.dark_theme = theme
-    page.bgcolor = BACKGROUND
+def qt_stylesheet():
+    return f"""
+    QWidget {{ color: {TEXT}; font-family: '{FONT_FAMILY}'; font-size: {BODY_SIZE}px; }}
+    QMainWindow, QDialog {{ background: {BACKGROUND}; }}
+    QMenu, QToolTip {{ background: {SURFACE}; border: 1px solid {OUTLINE}; padding: 6px; }}
+    QMenu::item:selected {{ background: {SURFACE_ACCENT}; color: {ACCENT_LIGHT}; }}
+    QLabel {{ background: transparent; }}
+    QLineEdit, QPlainTextEdit, QTextEdit, QTextBrowser, QComboBox, QListWidget {{
+        background: {SURFACE}; border: 1px solid {DIVIDER}; border-radius: {RADIUS}px;
+        padding: 8px; selection-background-color: {ACCENT}; selection-color: {TEXT};
+    }}
+    QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus {{ border-color: {ACCENT_LIGHT}; }}
+    QComboBox QAbstractItemView {{ background: {SURFACE}; selection-background-color: {ACCENT}; }}
+    QListWidget::item {{ padding: 8px; margin: 3px; border-radius: {RADIUS}px; }}
+    QListWidget::item:selected {{ background: {SURFACE_ACCENT}; }}
+    QPushButton {{ background: {SURFACE_ACCENT}; color: {ACCENT_LIGHT};
+        border: 1px solid {OUTLINE}; border-radius: {RADIUS}px; padding: 7px 14px; }}
+    QPushButton:hover {{ border-color: {ACCENT_LIGHT}; background: {SURFACE_RAISED}; }}
+    QPushButton:default {{ background: {ACCENT}; color: {TEXT}; border-color: {ACCENT}; }}
+    QPushButton:disabled, QLineEdit:disabled, QComboBox:disabled {{ color: {DISABLED}; }}
+    QCheckBox {{ spacing: 8px; }}
+    QCheckBox::indicator {{ width: 16px; height: 16px; border: 1px solid {OUTLINE}; border-radius: 3px; background: {SURFACE}; }}
+    QCheckBox::indicator:checked {{ background: {ACCENT}; border: 2px solid {ACCENT_LIGHT}; }}
+    QScrollBar:vertical {{ background: {SURFACE}; width: {SCROLLBAR_WIDTH}px; margin: 0; border-radius: 5px; }}
+    QScrollBar::handle:vertical {{ background: {ACCENT}; min-height: 24px; border-radius: 5px; }}
+    QScrollBar::handle:vertical:hover {{ background: {ACCENT_LIGHT}; }}
+    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+    QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
+    """
 
 
-def configure_tk_scrollbar(style, name="Screenshot.Vertical.TScrollbar"):
-    """Use painted scrollbars so Windows does not override the shared palette."""
-    style.theme_use("clam")
-    style.layout(name, [
-        ("Vertical.Scrollbar.trough", {"sticky": "ns", "children": [
-            ("Vertical.Scrollbar.thumb", {"sticky": "nswe", "expand": "1"}),
-        ]}),
-    ])
-    style.configure(name, troughcolor=SURFACE, background=ACCENT,
-                    darkcolor=ACCENT, lightcolor=ACCENT, bordercolor=SURFACE,
-                    borderwidth=0, relief="flat", width=SCROLLBAR_WIDTH)
-    style.map(name, background=[("active", ACCENT_LIGHT), ("pressed", ACCENT_LIGHT)])
-    return name
+def apply_qt_theme(app):
+    from PySide6.QtGui import QFont, QPalette, QColor
+    app.setStyle("Fusion")
+    app.setFont(QFont(FONT_FAMILY, 10))
+    palette = QPalette()
+    for role, color in ((QPalette.ColorRole.Window, BACKGROUND), (QPalette.ColorRole.Base, SURFACE),
+                        (QPalette.ColorRole.WindowText, TEXT), (QPalette.ColorRole.Text, TEXT),
+                        (QPalette.ColorRole.Button, SURFACE_ACCENT), (QPalette.ColorRole.ButtonText, TEXT),
+                        (QPalette.ColorRole.Highlight, ACCENT), (QPalette.ColorRole.HighlightedText, TEXT)):
+        palette.setColor(role, QColor(color))
+    app.setPalette(palette)
+    app.setStyleSheet(qt_stylesheet())

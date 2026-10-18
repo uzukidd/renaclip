@@ -1,24 +1,13 @@
-# Gemini-API demo dependencies (https://github.com/HanaokaYuzu/Gemini-API)
-# Python 3.10+
-flet
-# CommonMark parsing for native screenshot answer formatting
-markdown-it-py>=3.0.0
-requests
+# Native Qt desktop UI (no Flet/Flutter/Tk runtime)
+PySide6>=6.8,<7
+# OpenAI-compatible Responses/Chat Completions
+openai>=1.93.0
+# Optional Gemini Web backend and browser cookie extraction
 gemini-webapi>=1.18.0
-# Optional: required when using SOCKS5 proxy (e.g. socks5://127.0.0.1:8889)
 httpx[socks]>=0.27.0
-# For gemini_clipboard_app.py / renaclip_app.py: clipboard + global hotkey Ctrl+1
+browser-cookie3>=0.18.0
+selenium>=4.0.0
+requests
+# Clipboard and global shortcuts
 pyperclip>=1.8.0
 keyboard>=0.13.0
-# For reliable process tree kill on Windows
-psutil>=5.9.0
-# System tray icon when service is running
-pystray>=0.19.0
-Pillow>=9.0.0
-# Windows toast notifications
-win10toast>=0.9
-# OpenAI-compatible providers (OpenAI, DeepSeek, Ollama, vLLM, etc.)
-openai>=1.93.0
-# Selenium for browser automation
-selenium>=4.0.0
-browser-cookie3>=0.18.0

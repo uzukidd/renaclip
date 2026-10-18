@@ -1,621 +1,432 @@
-"""Persistent native screenshot selection with editable single-question answers."""
+"""Qt screenshot selection and progressive Markdown answer bubbles.
 
-import asyncio
+All coordinates are Qt logical pixels. Network callbacks arrive through the
+application's AsyncExecutor; the overlay never owns a thread or event loop.
+"""
 import base64
-from concurrent.futures import TimeoutError
 from copy import deepcopy
-import math
-import queue
-import threading
+from urllib.parse import urlsplit
 
-from PIL import ImageEnhance, ImageGrab
+from PySide6.QtCore import QByteArray, QBuffer, QIODevice, QPoint, QRect, QRectF, Qt, QTimer, Signal, QEvent, QThread, QUrl
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QPainter, QPen, QPixmap, QTextDocument
+from PySide6.QtWidgets import QApplication, QLabel, QPlainTextEdit, QTextBrowser, QWidget, QVBoxLayout, QHBoxLayout
 
-from interfaces.screen_capture import _WindowsDesktop, _crop_png, normalize_region
+from interfaces import theme
 from openai_client.screenshot_chat import ScreenshotConversation
-from interfaces.markdown_text import parse_markdown, TkMarkdownRenderer
-from interfaces.answer_layout import (
-    MAX_PANEL_HEIGHT, MAX_ANSWER_HEIGHT, measure_wrapped_lines,
-    answer_content_height, compute_answer_bounds,
-)
-
-from interfaces.theme import (
-    ACCENT, SURFACE_ACCENT as QUESTION_BG, SURFACE as ANSWER_BG,
-    TEXT as TEXT_COLOR, ACCENT_LIGHT as CAPTION_COLOR,
-    FONT_FAMILY, BODY_SIZE, RADIUS, CONTENT_PADDING, SCROLLBAR_WIDTH, SELECTION_WIDTH,
-    configure_tk_scrollbar,
-)
 
 
-def fit_caption(text, max_width, measure):
-    """Ellipsize one header line to leave a fixed area for the spinner."""
-    if measure(text) <= max_width:
-        return text
-    suffix = "..."
-    if measure(suffix) > max_width:
-        return ""
-    low, high = 0, len(text)
-    while low < high:
-        middle = (low + high + 1) // 2
-        if measure(text[:middle] + suffix) <= max_width:
-            low = middle
-        else:
-            high = middle - 1
-    return text[:low] + suffix
+def safe_url(value):
+    value = str(value)
+    if any(ord(c) < 32 for c in value) or "\\" in value:
+        return False
+    try:
+        parsed = urlsplit(value)
+        return parsed.scheme.lower() in ("http", "https") and bool(parsed.hostname) and not (parsed.username or parsed.password)
+    except ValueError:
+        return False
 
 
-def contains(rect, x, y):
-    return rect is not None and rect[0] <= x < rect[2] and rect[1] <= y < rect[3]
+def capture_desktop(screens):
+    """Grab all screens before showing UI, composing each at its logical size."""
+    virtual = QRect()
+    for screen in screens:
+        virtual = virtual.united(screen.geometry())
+    if virtual.isEmpty():
+        raise RuntimeError("No screen is available")
+    ratio = max(float(screen.devicePixelRatio()) for screen in screens)
+    result = QPixmap(round(virtual.width() * ratio), round(virtual.height() * ratio))
+    result.setDevicePixelRatio(ratio)
+    result.fill(Qt.GlobalColor.black)
+    painter = QPainter(result)
+    for screen in screens:
+        geometry = screen.geometry().translated(-virtual.topLeft())
+        grabbed = screen.grabWindow(0)
+        painter.drawPixmap(QRectF(geometry), grabbed, QRectF(grabbed.rect()))
+    painter.end()
+    return result, virtual
 
 
-def panel_geometry(bounds, work_area, scale=1.0):
-    """Return physical layout bounds, preferring free right/left/below/above space."""
-    if not math.isfinite(scale) or scale <= 0:
-        raise ValueError("scale must be positive")
-    left, top, right, bottom = work_area
-    if right <= left or bottom <= top:
-        raise ValueError("empty work area")
-    width, height = min(round(360 * scale), right - left), min(round(330 * scale), bottom - top)
-    gap = max(1, round(8 * scale))
-    x1, y1, x2, y2 = bounds
-    y = max(top, min(y1, bottom - height))
-    x = max(left, min(x1, right - width))
-    candidates = [(x2 + gap, y), (x1 - gap - width, y),
-                  (x, y2 + gap), (x, y1 - gap - height)]
-    for px, py in candidates:
-        if left <= px and px + width <= right and top <= py and py + height <= bottom:
-            return px, py, px + width, py + height
-    spaces = [(max(left, x2 + gap), top, right, bottom),
-              (left, top, min(right, x1 - gap), bottom),
-              (left, max(top, y2 + gap), right, bottom),
-              (left, top, right, min(bottom, y1 - gap))]
-    usable = [r for r in spaces if r[2] - r[0] >= min(width, round(180 * scale))
-              and r[3] - r[1] >= min(height, round(140 * scale))]
-    if usable:
-        l, t, r, b = max(usable, key=lambda r: (r[2] - r[0]) * (r[3] - r[1]))
-        return l, t, min(r, l + width), min(b, t + height)
-    x = max(left, min(x2 + gap, right - width))
-    return x, y, x + width, y + height
+class QuestionEdit(QPlainTextEdit):
+    submit = Signal()
 
-
-def bubble_geometry(panel, scale):
-    l, t, r, b = panel
-    gap = min(max(2, round(10 * scale)), max(2, (b - t) // 12))
-    question_height = min(round(96 * scale), max(1, (b - t - gap) // 3))
-    return (l, t, r, t + question_height), (l, t + question_height + gap, r, b)
-
-
-class AsyncRequestRunner:
-    """Only this worker thread touches asyncio; only Tk consumes result events."""
-
-    def __init__(self, conversation_factory=ScreenshotConversation):
-        self.factory = conversation_factory
-        self.loop = asyncio.new_event_loop()
-        self.closed = False
-        self.thread = threading.Thread(target=self._run, daemon=True, name="screenshot-request")
-        self.thread.start()
-
-    def _run(self):
-        asyncio.set_event_loop(self.loop)
-        self.loop.run_forever()
-        self.loop.close()
-
-    def submit(self, png, question, provider, generation, events):
-        async def request():
-            try:
-                url = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
-                conversation = self.factory(deepcopy(provider), url)
-                answer = await conversation.send(
-                    question, on_delta=lambda text: events.put((generation, "delta", text)),
-                )
-                events.put((generation, "done", answer))
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                status = getattr(exc, "status_code", None)
-                message = f"Request failed (HTTP {status})." if isinstance(status, int) else "Request failed. Please retry."
-                events.put((generation, "error", message))
-        if self.closed:
-            raise RuntimeError("request runner is closed")
-        return asyncio.run_coroutine_threadsafe(request(), self.loop)
-
-    def cancel(self, handle):
-        if handle is not None:
-            handle.cancel()
-
-    def close(self):
-        if self.closed:
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not (event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
+            if not event.isAutoRepeat():
+                self.submit.emit()
+            event.accept()
             return
-        self.closed = True
-
-        async def shutdown():
-            tasks = [task for task in asyncio.all_tasks() if task is not asyncio.current_task()]
-            for task in tasks:
-                if not task.cancelling():
-                    task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-        try:
-            asyncio.run_coroutine_threadsafe(shutdown(), self.loop).result(timeout=4)
-        except TimeoutError:
-            pass
-        finally:
-            self.loop.call_soon_threadsafe(self.loop.stop)
-            self.thread.join(timeout=2)
+        super().keyPressEvent(event)
 
 
-class ScreenshotOverlay:
-    """Physical-coordinate state API; owns injected desktop and request runner."""
+class AnswerBrowser(QTextBrowser):
+    """Allow visible Markdown and navigation without fetching remote resources."""
+    def loadResource(self, resource_type, name):
+        return QByteArray()
 
-    def __init__(self, provider, stop_event=None, focus_event=None, *,
-                 desktop=None, native=None, request_runner=None, on_close=None):
+
+class SpinnerWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.angle = 0
+        self.setFixedSize(22, 22)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor(theme.ACCENT), 2))
+        painter.drawArc(QRectF(2, 2, 18, 18), self.angle * 16, 250 * 16)
+
+
+class ScreenshotOverlay(QWidget):
+    closed = Signal()
+
+    def __init__(self, provider, executor, parent=None, *, screenshot=None, screens=None, work_area=None):
+        app = QApplication.instance()
+        if app is None or QThread.currentThread() != app.thread():
+            raise RuntimeError("ScreenshotOverlay requires the Qt UI thread")
+        super().__init__(parent, Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
         self.provider = deepcopy(provider)
-        self.on_close = on_close
-        self.stop_event, self.focus_event = stop_event, focus_event
-        self.native = native if native is not None else _WindowsDesktop()
-        self.virtual = self.native.virtual
-        self.desktop = desktop if desktop is not None else ImageGrab.grab(
-            all_screens=True, include_layered_windows=True)
-        self.runner = request_runner
-        self.events = queue.Queue()
-        self.root = None
-        self.bounds = self.panel_bounds = self.start = None
-        self.question_bubble_bounds = self.answer_bubble_bounds = None
-        self.request = None
+        self.executor = executor
+        self.screens = list(screens if screens is not None else app.screens())
+        if screenshot is None:
+            self.snapshot, self.virtual_geometry = capture_desktop(self.screens)
+        elif isinstance(screenshot, tuple):
+            self.snapshot, self.virtual_geometry = screenshot
+        else:
+            self.snapshot = screenshot
+            size = screenshot.deviceIndependentSize().toSize()
+            self.virtual_geometry = QRect(QPoint(), size)
+        self.setGeometry(self.virtual_geometry)
+        self._work_area = QRect(work_area) if work_area is not None else None
+        self.setMouseTracking(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
+        self.bounds = QRect()
+        self.question_bounds = QRect()
+        self.answer_bounds = QRect()
+        self._max_panel = QRect()
+        self.drag_start = None
         self.generation = 0
-        self.pending = self.sent = self.closed = self.editing = False
-        self.question = self.answer = ""
-        self._markdown_source = None
-        self._answer_document = None
-        self._answer_renderer = None
-        effort = str(provider.get("reasoning_effort") or "default").lower()
-        label = {"low": "Low", "medium": "Medium", "high": "High"}.get(effort, "Default")
-        self.model_caption = f"{provider.get('model') or 'Model'} / {label}"
-        self.answer_visible = self.waiting_visible = False
-        self.hint_visible = True
-        self.png = None
-        self.scale = 1.0
-        self.spinner_angle = 0
-        self.spinner_visible = False
-        self._spinner_after = None
-        self._question_needs_sync = True
-        self._layout_key = None
-        self._enter_pressed = False
-
-    def _point(self, x, y):
-        l, t, r, b = self.virtual
-        return max(l, min(x, r)), max(t, min(y, b))
-
-    def begin_selection(self, x, y):
-        if self.closed:
-            return False
-        if (contains(self.question_bubble_bounds, x, y) or
-                (self.answer_visible and contains(self.answer_bubble_bounds, x, y))):
-            if self.sent and not self.pending:
-                self.begin_editing(focus=contains(self.question_bubble_bounds, x, y))
-            return False
-        if contains(self.bounds, x, y):
-            return False
-        self.generation += 1
-        if self.runner is not None:
-            self.runner.cancel(self.request)
-        self.request = None
-        self._stop_spinner()
-        self.bounds = self.panel_bounds = self.png = None
-        self.question_bubble_bounds = self.answer_bubble_bounds = None
         self.pending = self.sent = self.editing = False
-        self.question = self.answer = ""
         self.answer_visible = self.waiting_visible = False
-        self.hint_visible = True
-        self._question_needs_sync = True
-        self._enter_pressed = False
-        self.start = self._point(x, y)
-        self._render_selection(None)
-        self._sync_panel()
-        return True
+        self.question = self.answer = ""
+        self.request = None
+        self._closed = False
+        effort = str(provider.get("reasoning_effort") or "default").lower()
+        effort = effort if effort in ("low", "medium", "high") else "default"
+        self.model_caption = f"{provider.get('model') or 'Model'} / {effort.capitalize()}"
+        self.spinner_angle = 0
+        self.spinner = QTimer(self)
+        self.spinner.setInterval(60)
+        self.spinner.timeout.connect(self._spin)
+        self.question_bubble = QWidget(self)
+        self.question_bubble.setObjectName("questionBubble")
+        qlayout = QVBoxLayout(self.question_bubble)
+        qlayout.setContentsMargins(theme.CONTENT_PADDING, theme.CONTENT_PADDING, theme.CONTENT_PADDING, theme.CONTENT_PADDING)
+        self.question_widget = QuestionEdit(self.question_bubble)
+        self.question_widget.setPlaceholderText("Ask something...")
+        self.question_widget.submit.connect(self.send_question)
+        qlayout.addWidget(self.question_widget)
+        self.answer_bubble = QWidget(self)
+        self.answer_bubble.setObjectName("answerBubble")
+        alayout = QVBoxLayout(self.answer_bubble)
+        alayout.setContentsMargins(theme.CONTENT_PADDING, theme.CONTENT_PADDING, theme.CONTENT_PADDING, theme.CONTENT_PADDING)
+        header = QHBoxLayout()
+        self.answer_caption = QLabel(self.model_caption, self.answer_bubble)
+        self.answer_caption.setStyleSheet(f"color:{theme.ACCENT_LIGHT};font-weight:600;")
+        self.answer_caption.setMinimumWidth(0)
+        header.addWidget(self.answer_caption, 1)
+        self.header_spinner = SpinnerWidget(self.answer_bubble)
+        self.header_spinner.hide()
+        header.addWidget(self.header_spinner)
+        alayout.addLayout(header)
+        self.answer_widget = AnswerBrowser(self.answer_bubble)
+        self.answer_widget.setOpenLinks(False)
+        self.answer_widget.setOpenExternalLinks(False)
+        self.answer_widget.anchorClicked.connect(self._open_link)
+        self.answer_widget.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.answer_widget.document().setDefaultStyleSheet(f"a {{ color:{theme.ACCENT_LIGHT}; text-decoration:underline; }}")
+        alayout.addWidget(self.answer_widget, 1)
+        self.setStyleSheet(f"""
+            QWidget#questionBubble {{background:{theme.SURFACE_ACCENT};border-radius:{theme.RADIUS}px;}}
+            QWidget#answerBubble {{background:{theme.SURFACE};border-radius:{theme.RADIUS}px;}}
+            QPlainTextEdit,QTextBrowser {{background:transparent;color:{theme.TEXT};border:0;selection-background-color:{theme.ACCENT};font-family:'{theme.FONT_FAMILY}';font-size:{theme.BODY_SIZE}px;}}
+            QScrollBar:vertical {{background:{theme.SURFACE};width:{theme.SCROLLBAR_WIDTH}px;margin:0;}}
+            QScrollBar::handle:vertical {{background:{theme.ACCENT};min-height:24px;border-radius:4px;}}
+            QScrollBar::handle:vertical:hover {{background:{theme.ACCENT_LIGHT};}}
+            QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical {{height:0;}}
+            QScrollBar::add-page:vertical,QScrollBar::sub-page:vertical {{background:transparent;}}
+        """)
+        self.question_bubble.hide()
+        self.answer_bubble.hide()
+        for child in (self.question_bubble, self.question_widget, self.question_widget.viewport(),
+                      self.answer_bubble, self.answer_caption, self.answer_widget, self.answer_widget.viewport(),
+                      self.answer_widget.verticalScrollBar(), self.header_spinner):
+            child.installEventFilter(self)
 
-    def begin_editing(self, focus=True):
-        if self.closed or self.pending or not self.sent:
+    def start(self):
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        self.setFocus()
+        return self
+
+    def _point(self, x, y=None):
+        point = QPoint(x) if isinstance(x, QPoint) else QPoint(int(x), int(y))
+        return QPoint(max(0, min(point.x(), self.width() - 1)), max(0, min(point.y(), self.height() - 1)))
+
+    def begin_selection(self, x, y=None):
+        point = self._point(x, y)
+        if self._closed:
             return False
-        self.editing = True
-        self._sync_panel()
-        if self.root is not None and focus:
-            self.question_widget.focus_set()
+        if self.question_bubble.isVisible() and self.question_bounds.contains(point):
+            if self.sent:
+                self.begin_editing()
+            return False
+        if self.answer_visible and self.answer_bounds.contains(point):
+            if self.sent:
+                self.begin_editing()
+            return False
+        if self.bounds.contains(point):
+            return False
+        self._cancel_request()
+        self.generation += 1
+        self.pending = self.sent = self.editing = False
+        self.answer_visible = self.waiting_visible = False
+        self.question = self.answer = ""
+        self.question_widget.clear()
+        self.answer_widget.clear()
+        self.question_bubble.hide()
+        self.answer_bubble.hide()
+        self.spinner.stop()
+        self.bounds = QRect()
+        self.drag_start = point
+        self.update()
         return True
 
-    def drag_selection(self, x, y):
-        if self.start is not None:
-            self._render_selection(normalize_region((*self.start, *self._point(x, y)), minimum=1))
+    def drag_selection(self, x, y=None):
+        if self.drag_start is not None:
+            self.bounds = QRect(self.drag_start, self._point(x, y)).normalized()
+            self.update()
 
-    def finish_selection(self, x, y):
-        if self.start is None or self.closed:
-            return
-        self.bounds = normalize_region((*self.start, *self._point(x, y)))
-        self.start = None
-        if self.bounds is not None:
-            self.png = _crop_png(self.desktop, self.bounds, self.virtual)
-            area, self.scale = self.native.monitor(self.bounds)
-            self.panel_bounds = panel_geometry(self.bounds, area, self.scale)
-            l, t, r, _ = self.panel_bounds
-            max_bottom = area[3]
-            # A panel placed above the selection must not grow into the image.
-            if l < self.bounds[2] and r > self.bounds[0] and t < self.bounds[1]:
-                max_bottom = min(max_bottom, self.bounds[1] - round(8 * self.scale))
-            self.panel_bounds = (l, t, r, min(max_bottom, t + round(MAX_PANEL_HEIGHT * self.scale)))
-            self.question_bubble_bounds, self.answer_bubble_bounds = bubble_geometry(self.panel_bounds, self.scale)
-            self._fit_answer_height()
-            self.editing = True
-        self._render_selection(self.bounds)
-        self._sync_panel()
-        if self.root is not None and self.bounds is not None:
-            self.question_widget.focus_set()
+    def finish_selection(self, x, y=None):
+        if self.drag_start is None or self._closed:
+            return False
+        self.bounds = QRect(self.drag_start, self._point(x, y)).normalized()
+        self.drag_start = None
+        if self.bounds.width() < 8 or self.bounds.height() < 8:
+            self.bounds = QRect()
+            self.update()
+            return False
+        self._place_panel()
+        self.question_bubble.setGeometry(self.question_bounds)
+        self.question_bubble.show()
+        self.question_widget.setReadOnly(False)
+        self.question_widget.setFocus()
+        self.editing = True
+        self.update()
+        return True
+
+    def _available(self):
+        if self._work_area is not None:
+            return self._work_area.intersected(self.rect())
+        global_rect = self.bounds.translated(self.virtual_geometry.topLeft())
+        screen = max(self.screens, key=lambda s: s.geometry().intersected(global_rect).width() * s.geometry().intersected(global_rect).height())
+        return screen.availableGeometry().translated(-self.virtual_geometry.topLeft()).intersected(self.rect())
+
+    def _place_panel(self):
+        area = self._available()
+        width = min(360, area.width())
+        height = min(720, area.height())
+        y = max(area.top(), min(self.bounds.top(), area.bottom() - height + 1))
+        if self.bounds.right() + 12 + width <= area.right() + 1:
+            x = self.bounds.right() + 12
+        elif self.bounds.left() - 12 - width >= area.left():
+            x = self.bounds.left() - 12 - width
+        else:
+            x = max(area.left(), min(self.bounds.right() + 12, area.right() - width + 1))
+        self._max_panel = QRect(x, y, width, min(720, area.bottom() - y + 1))
+        self.question_bounds = QRect(x, y, width, min(96, max(24, self._max_panel.height() // 3)))
+
+    def _image_url(self):
+        # Snapshot and crop are logical; crop QPixmap.copy requires physical pixels.
+        ratio = self.snapshot.devicePixelRatio()
+        physical = QRect(round(self.bounds.x() * ratio), round(self.bounds.y() * ratio),
+                         round(self.bounds.width() * ratio), round(self.bounds.height() * ratio))
+        crop = self.snapshot.copy(physical)
+        buffer = QBuffer()
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        crop.save(buffer, "PNG")
+        return "data:image/png;base64," + base64.b64encode(bytes(buffer.data())).decode("ascii")
 
     def send_question(self, question=None):
-        if self.closed or self.bounds is None or self.pending or (self.sent and not self.editing):
+        if self._closed or self.bounds.isEmpty() or self.pending or (self.sent and not self.editing):
             return False
-        text = (question if question is not None else self.question_widget.get("1.0", "end")).strip()
+        text = (self.question_widget.toPlainText() if question is None else str(question)).strip()
         if not text:
             return False
-        self.question, self.answer = text, ""
+        self.question = text
+        self.question_widget.setPlainText(text)
+        self.question_widget.setReadOnly(True)
+        self.answer = ""
+        self.answer_widget.clear()
+        self.answer_bubble.hide()
         self.answer_visible = False
         self.waiting_visible = True
-        self.hint_visible = False
-        self._question_needs_sync = True
         self.pending, self.sent, self.editing = True, False, False
         self.generation += 1
-        self._sync_panel()
-        self._start_spinner()
+        token = self.generation
+        self.spinner.start()
+        self.update()
+        image = self._image_url()
+        async def request():
+            conversation = ScreenshotConversation(self.provider, image)
+            return await conversation.send(text, on_delta=lambda delta: self.executor.post(self.receive_delta, token, delta))
+        coro = request()
         try:
-            if self.runner is None:
-                self.runner = AsyncRequestRunner()
-            self.request = self.runner.submit(self.png, text, self.provider, self.generation, self.events)
-        except Exception:
-            self.events.put((self.generation, "error", "Request failed. Please retry."))
+            self.request = self.executor.submit(coro,
+                on_result=lambda result: self.receive_result(token, result),
+                on_error=lambda error: self.receive_error(token, error))
+        except Exception as error:
+            coro.close()
+            self.receive_error(token, error)
         return True
 
-    def _ime_composing(self):
-        # Native IMEs normally consume Return; also guard an active Win32 composition.
-        if self.root is None:
+    def receive_delta(self, token, text):
+        if self._closed or token != self.generation or not self.pending:
+            return
+        self.answer += text
+        if self.answer.strip():
+            self.answer_visible, self.waiting_visible = True, False
+            self._render_answer()
+        self.update()
+
+    def receive_result(self, token, text):
+        if self._closed or token != self.generation or not self.pending:
+            return
+        if not str(text or "").strip():
+            self.receive_error(token, RuntimeError("Empty answer"))
+            return
+        self.answer = str(text)
+        self.pending, self.sent, self.editing = False, True, False
+        self.answer_visible, self.waiting_visible = True, False
+        self.request = None
+        self.spinner.stop()
+        self._render_answer()
+        self.update()
+
+    def receive_error(self, token, error):
+        if self._closed or token != self.generation or not self.pending:
+            return
+        status = getattr(error, "status_code", None)
+        self.answer = f"Request failed (HTTP {status}). Please retry." if isinstance(status, int) else "Request failed. Please retry."
+        self.pending = self.sent = self.waiting_visible = False
+        self.editing = self.answer_visible = True
+        self.request = None
+        self.question_widget.setReadOnly(False)
+        self.spinner.stop()
+        self._render_answer()
+        self.update()
+
+    def _render_answer(self):
+        bar = self.answer_widget.verticalScrollBar()
+        old_value, at_bottom = bar.value(), bar.value() >= bar.maximum() - 2
+        self.answer_widget.setMarkdown(self.answer)
+        document = self.answer_widget.document()
+        document.setTextWidth(max(1, self.question_bounds.width() - 2 * theme.CONTENT_PADDING - theme.SCROLLBAR_WIDTH - 8))
+        desired = int(document.size().height()) + 2 * theme.CONTENT_PADDING + 34
+        available = max(1, self._max_panel.bottom() - self.question_bounds.bottom() - 10)
+        height = min(560, available, max(90, desired))
+        self.answer_bounds = QRect(self.question_bounds.x(), self.question_bounds.bottom() + 11, self.question_bounds.width(), height)
+        self.answer_bubble.setGeometry(self.answer_bounds)
+        self.answer_bubble.show()
+        self.header_spinner.setVisible(self.pending)
+        fm = self.answer_caption.fontMetrics()
+        self.answer_caption.setText(fm.elidedText(self.model_caption, Qt.TextElideMode.ElideRight, max(1, self.answer_bounds.width() - 2 * theme.CONTENT_PADDING - 24)))
+        bar.setValue(bar.maximum() if at_bottom else old_value)
+
+    def begin_editing(self):
+        if self._closed or self.pending or not self.sent:
             return False
-        try:
-            import ctypes
-            from ctypes import wintypes
-            ime = ctypes.WinDLL("imm32")
-            ime.ImmGetContext.argtypes = [wintypes.HWND]
-            ime.ImmGetContext.restype = wintypes.HANDLE
-            ime.ImmGetCompositionStringW.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
-            ime.ImmReleaseContext.argtypes = [wintypes.HWND, wintypes.HANDLE]
-            hwnd = self.question_widget.winfo_id()
-            context = ime.ImmGetContext(hwnd)
-            try:
-                return bool(context and ime.ImmGetCompositionStringW(context, 8, None, 0) > 0)
-            finally:
-                if context:
-                    ime.ImmReleaseContext(hwnd, context)
-        except (AttributeError, OSError):
-            return False
+        self.editing = True
+        self.question_widget.setReadOnly(False)
+        self.question_widget.setFocus()
+        return True
 
-    def handle_enter(self, event):
-        if getattr(event, "state", 0) & 1:
-            return None  # Let Tk Text insert one newline for Shift+Enter.
-        if self._ime_composing():
-            return None
-        if not self._enter_pressed:
-            self._enter_pressed = True
-            self.send_question()
-        return "break"
+    def _open_link(self, url):
+        if safe_url(url.toString()):
+            QDesktopServices.openUrl(url)
 
-    def release_enter(self, event=None):
-        self._enter_pressed = False
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
+            self.close()
+            return True
+        if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+            if watched is self.answer_widget.viewport():
+                if self.answer_widget.anchorAt(event.position().toPoint()):
+                    return False
+            if self.sent:
+                # Keep browser focus for text selection, but reopen question editing.
+                self.editing = True
+                self.question_widget.setReadOnly(False)
+                if watched not in (self.answer_widget, self.answer_widget.viewport()):
+                    self.question_widget.setFocus()
+        return super().eventFilter(watched, event)
 
-    def drain_events(self):
-        changed = False
-        while True:
-            try:
-                token, kind, text = self.events.get_nowait()
-            except queue.Empty:
-                break
-            if self.closed or token != self.generation or not self.pending:
-                continue
-            if kind == "delta":
-                self.answer += text
-                if self.answer.strip():
-                    self.answer_visible = True
-                    self.waiting_visible = False
-            elif kind in ("done", "error"):
-                self.answer = text or "The model returned no text. Please retry."
-                self.answer_visible = True
-                self.waiting_visible = False
-                self.pending = False
-                self.sent = kind == "done" and bool(text.strip())
-                self.editing = not self.sent
-                self.request = None
-                self._stop_spinner()
-            changed = True
-        if changed:
-            self._sync_panel()
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.begin_selection(event.position().toPoint())
 
-    def _start_spinner(self):
-        self._stop_spinner()
-        self.spinner_visible = True
-        self.spinner_angle = 0
-        self._tick_spinner()
+    def mouseMoveEvent(self, event):
+        if self.drag_start is not None:
+            self.drag_selection(event.position().toPoint())
 
-    def _tick_spinner(self):
-        self._spinner_after = None
-        if self.closed or not self.pending or not self.spinner_visible:
-            return
-        self.spinner_angle = (self.spinner_angle + 24) % 360
-        if self.root is not None:
-            self.canvas.itemconfigure(self.spinner_item, start=self.spinner_angle, state="normal")
-            self._spinner_after = self.root.after(60, self._tick_spinner)
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.finish_selection(event.position().toPoint())
 
-    def _stop_spinner(self):
-        self.spinner_visible = False
-        if self.root is not None and hasattr(self, "spinner_item"):
-            if self._spinner_after is not None:
-                self.root.after_cancel(self._spinner_after)
-            self.canvas.itemconfigure(self.spinner_item, state="hidden")
-        self._spinner_after = None
-
-    def _render_selection(self, rect):
-        if self.root is None:
-            return
-        if rect is None:
-            self.canvas.itemconfigure(self.selected_item, state="hidden")
-            self.canvas.itemconfigure(self.outline_item, state="hidden")
-            return
-        from PIL import ImageTk
-        vx, vy = self.virtual[:2]
-        local = (rect[0] - vx, rect[1] - vy, rect[2] - vx, rect[3] - vy)
-        self.selection_photo = ImageTk.PhotoImage(self.desktop.crop(local), master=self.root)
-        self.canvas.coords(self.selected_item, *local[:2])
-        self.canvas.itemconfigure(self.selected_item, image=self.selection_photo, state="normal")
-        self.canvas.coords(self.outline_item, *local)
-        self.canvas.itemconfigure(self.outline_item, state="normal", width=max(SELECTION_WIDTH, round(SELECTION_WIDTH * self.scale)))
-
-    def _layout_bubbles(self):
-        key = (self.question_bubble_bounds, self.answer_bubble_bounds, self.scale,
-               self.answer_visible, self.waiting_visible)
-        if key == self._layout_key:
-            return
-        self._layout_key = key
-        if self.panel_bounds is None:
-            self.canvas.itemconfigure("bubble", state="hidden")
-            return
-        self.canvas.itemconfigure("question", state="normal")
-        self.canvas.itemconfigure("answer", state="normal" if self.answer_visible else "hidden")
-        self.canvas.itemconfigure(self.waiting_item, state="normal" if self.waiting_visible else "hidden")
-        vx, vy = self.virtual[:2]
-        for bounds, shape, widget, item in (
-            (self.question_bubble_bounds, self.question_shape, self.question_widget, self.question_item),
-            (self.answer_bubble_bounds, self.answer_shape, self.answer_widget, self.answer_item),
-        ):
-            l, t, r, b = bounds
-            l, t, r, b = l - vx, t - vy, r - vx, b - vy
-            pad = min(round(CONTENT_PADDING * self.scale), max(2, (b - t) // 8), max(2, (r - l) // 8))
-            radius = min(round(RADIUS * self.scale), pad)
-            points = [l + radius, t, r - radius, t, r, t, r, t + radius,
-                      r, b - radius, r, b, r - radius, b, l + radius, b,
-                      l, b, l, b - radius, l, t + radius, l, t]
-            self.canvas.coords(shape, *points)
-            font_size = max(8, min(round(BODY_SIZE * self.scale), (b - t) // 4))
-            is_answer = item == self.answer_item
-            title_height = font_size + max(2, round(4 * self.scale)) if is_answer else 0
-            widget.configure(font=(FONT_FAMILY, -font_size))
-            extra = max(8, round(SCROLLBAR_WIDTH * self.scale)) if is_answer else 0
-            self.canvas.coords(item, l + pad, t + pad + title_height)
-            self.canvas.itemconfigure(item, width=max(1, r - l - 2 * pad - extra),
-                                      height=max(1, b - t - 2 * pad - title_height))
-            if not is_answer:
-                self.question_hint.configure(font=(FONT_FAMILY, -font_size))
-            else:
-                from tkinter.font import Font
-                header_font = Font(root=self.root, family=FONT_FAMILY, size=-font_size, weight="bold")
-                diameter = min(round(16 * self.scale), title_height)
-                title = fit_caption(self.model_caption, max(0, r - l - 3 * pad - diameter), header_font.measure)
-                self.canvas.coords(self.answer_caption, l + pad, t + pad)
-                self.canvas.itemconfigure(self.answer_caption, text=title,
-                                          font=(FONT_FAMILY, -font_size, "bold"))
-                self.canvas.coords(self.scrollbar_item, r - pad - extra, t + pad + title_height)
-                self.canvas.itemconfigure(self.scrollbar_item, width=extra,
-                                          height=max(1, b - t - 2 * pad - title_height))
-                if self.waiting_visible:
-                    self.canvas.coords(self.spinner_item, l + pad, t + pad, l + pad + diameter, t + pad + diameter)
-                else:
-                    self.canvas.coords(self.spinner_item, r - pad - diameter, t + pad,
-                                       r - pad, t + pad + diameter)
-                self.canvas.coords(self.waiting_item, l + 2 * pad + diameter, t + pad)
-                self.canvas.itemconfigure(self.waiting_item, font=(FONT_FAMILY, -font_size))
-                self.canvas.itemconfigure(self.spinner_item, width=max(2, round(2 * self.scale)))
-        self.canvas.itemconfigure(self.spinner_item, state="normal" if self.spinner_visible else "hidden")
-
-    def _sync_hint(self, event=None):
-        if self.root is None or not hasattr(self, "question_hint"):
-            return
-        self.hint_visible = not bool(self.question_widget.get("1.0", "end-1c")) and not self.pending
-        if self.hint_visible:
-            self.question_hint.place(x=2, y=2)
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self.close()
         else:
-            self.question_hint.place_forget()
-        if self.question_widget.edit_modified():
-            self.question_widget.edit_modified(False)
+            super().keyPressEvent(event)
 
-    def _fit_answer_height(self):
-        if self._markdown_source != self.answer:
-            self._answer_document = parse_markdown(self.answer)
-            self._markdown_source = self.answer
-        if self.question_bubble_bounds is None or self.panel_bounds is None:
-            return
-        pixel_size = max(8, round(BODY_SIZE * self.scale))
-        line_height = math.ceil(pixel_size * 1.4)
-        measure = lambda value: len(value) * pixel_size * 0.6
-        if hasattr(self, "_answer_font"):
-            self._answer_font.configure(size=-pixel_size)
-            measure = self._answer_font.measure
-            line_height = self._answer_font.metrics("linespace")
-        width = max(1, self.panel_bounds[2] - self.panel_bounds[0]
-                    - round((2 * CONTENT_PADDING + SCROLLBAR_WIDTH) * self.scale) - 6)
-        lines = measure_wrapped_lines(
-            self._answer_document.text, width, measure,
-            max_lines=max(1, math.ceil(MAX_ANSWER_HEIGHT * self.scale / line_height)),
-        )
-        rect = compute_answer_bounds(
-            self.question_bubble_bounds, self.panel_bounds,
-            answer_content_height(lines, line_height, self.scale), self.scale,
-        )
-        if rect is not None:
-            self.answer_bubble_bounds = rect
+    def _spin(self):
+        self.spinner_angle = (self.spinner_angle + 24) % 360
+        self.header_spinner.angle = self.spinner_angle
+        self.header_spinner.update()
+        self.update()
 
-    def _sync_panel(self):
-        self._fit_answer_height()
-        if self.root is None:
-            return
-        self._layout_bubbles()
-        self.question_widget.configure(state="normal")
-        if self._question_needs_sync:
-            self.question_widget.delete("1.0", "end")
-            self.question_widget.insert("1.0", self.question)
-            self._question_needs_sync = False
-        self.question_widget.configure(state="normal" if self.editing and not self.pending else "disabled")
-        self._sync_hint()
-        if self._answer_renderer is not None:
-            self._answer_renderer.render(self._answer_document, max(8, round(BODY_SIZE * self.scale)))
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.drawPixmap(QRectF(self.rect()), self.snapshot, QRectF(self.snapshot.rect()))
+        painter.fillRect(self.rect(), QColor(0, 0, 0, 166))
+        if not self.bounds.isEmpty():
+            source = QRectF(self.bounds.x() * self.snapshot.devicePixelRatio(), self.bounds.y() * self.snapshot.devicePixelRatio(), self.bounds.width() * self.snapshot.devicePixelRatio(), self.bounds.height() * self.snapshot.devicePixelRatio())
+            painter.drawPixmap(QRectF(self.bounds), self.snapshot, source)
+            painter.setPen(QPen(QColor(theme.ACCENT), theme.SELECTION_WIDTH))
+            painter.drawRect(self.bounds)
+        if self.pending:
+            # Paint in parent only outside child bubbles; header spinner is painted via overlay above children.
+            if self.waiting_visible:
+                ring = QRectF(self.question_bounds.left() + 12, self.question_bounds.bottom() + 20, 18, 18)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                painter.setPen(QPen(QColor(theme.ACCENT), 2))
+                painter.drawArc(ring, self.spinner_angle * 16, 250 * 16)
+                painter.setPen(QColor(theme.TEXT))
+                painter.setFont(QFont(theme.FONT_FAMILY, 10))
+                painter.drawText(int(ring.right() + 10), int(ring.bottom() - 2), "Thinking...")
+        painter.end()
 
-    def _poll(self):
-        if self.closed:
-            return
-        if self.stop_event is not None and self.stop_event.is_set():
-            self.close()
-            return
-        if self.focus_event is not None and self.focus_event.is_set():
-            self.focus_event.clear()
-            self.root.lift()
-            self.root.focus_force()
-        self.drain_events()
-        self.root.after(100, self._poll)
+    def _cancel_request(self):
+        if self.request is not None:
+            self.request.cancel()
+            self.request = None
 
-    def run(self):
-        if threading.current_thread() is not threading.main_thread():
-            raise RuntimeError("overlay must run on the main thread")
-        import tkinter as tk
-        from PIL import ImageTk
-        callback_error = None
-
-        def on_callback_error(exc_type, exc, traceback):
-            nonlocal callback_error
-            callback_error = exc
-            self.close()
-
-        try:
-            l, t, r, b = self.virtual
-            if self.desktop.size != (r - l, b - t):
-                raise RuntimeError("desktop geometry changed during capture")
-            self.root = tk.Tk()
-            self.root.withdraw()
-            self.root.overrideredirect(True)
-            self.root.attributes("-topmost", True)
-            self.root.geometry(f"{r - l}x{b - t}+0+0")
-            self.canvas = tk.Canvas(self.root, highlightthickness=0, cursor="crosshair")
-            self.canvas.pack(fill="both", expand=True)
-            self.dimmed_photo = ImageTk.PhotoImage(ImageEnhance.Brightness(self.desktop).enhance(0.35), master=self.root)
-            self.canvas.create_image(0, 0, image=self.dimmed_photo, anchor="nw")
-            self.selected_item = self.canvas.create_image(0, 0, anchor="nw", state="hidden")
-            self.outline_item = self.canvas.create_rectangle(0, 0, 0, 0, outline=ACCENT, width=SELECTION_WIDTH, state="hidden")
-            self.question_shape = self.canvas.create_polygon(0, 0, 0, 0, fill=QUESTION_BG, outline="", smooth=True, tags=("bubble", "question"))
-            self.answer_shape = self.canvas.create_polygon(0, 0, 0, 0, fill=ANSWER_BG, outline="", smooth=True, tags=("bubble", "answer"))
-            self.answer_caption = self.canvas.create_text(0, 0, text=self.model_caption, anchor="nw", fill=CAPTION_COLOR, tags=("bubble", "answer"))
-            self.waiting_item = self.canvas.create_text(0, 0, text="Rena Thinking...", anchor="nw", fill=TEXT_COLOR, tags="bubble")
-            self.question_widget = tk.Text(self.canvas, height=1, width=1, wrap="word", undo=True,
-                                           bg=QUESTION_BG, fg=TEXT_COLOR, insertbackground=TEXT_COLOR,
-                                           selectbackground=ACCENT, selectforeground=TEXT_COLOR,
-                                           relief="flat", borderwidth=0, highlightthickness=0)
-            self.question_hint = tk.Label(self.question_widget, text="Ask something...", bg=QUESTION_BG,
-                                           fg=CAPTION_COLOR, borderwidth=0, padx=0, pady=0, anchor="nw")
-            self.question_hint.bind("<ButtonPress-1>", lambda e: self.question_widget.focus_set())
-            self.question_widget.bind("<<Modified>>", self._sync_hint)
-            self.question_widget.bind("<FocusIn>", self._sync_hint)
-            self.answer_widget = tk.Text(self.canvas, width=1, height=1, wrap="word", state="disabled",
-                                         bg=ANSWER_BG, fg=TEXT_COLOR, selectbackground=ACCENT, selectforeground=TEXT_COLOR,
-                                         relief="flat", borderwidth=0, highlightthickness=0)
-            self._answer_renderer = TkMarkdownRenderer(self.answer_widget)
-            from tkinter.font import Font
-            self._answer_font = Font(root=self.root, family=FONT_FAMILY, size=-BODY_SIZE)
-            from tkinter import ttk
-            # Clam paints configured colors on Windows instead of native system colors.
-            self.scrollbar_style = ttk.Style(self.root)
-            style_name = configure_tk_scrollbar(self.scrollbar_style)
-            self.scrollbar = ttk.Scrollbar(self.canvas, orient="vertical", command=self.answer_widget.yview,
-                                           style=style_name)
-            self.answer_widget.configure(yscrollcommand=self.scrollbar.set)
-            self.question_item = self.canvas.create_window(0, 0, window=self.question_widget, anchor="nw", tags=("bubble", "question"))
-            self.answer_item = self.canvas.create_window(0, 0, window=self.answer_widget, anchor="nw", tags=("bubble", "answer"))
-            self.scrollbar_item = self.canvas.create_window(0, 0, window=self.scrollbar, anchor="nw", tags=("bubble", "answer"))
-            self.spinner_item = self.canvas.create_arc(0, 0, 1, 1, style="arc", extent=250, outline=ACCENT, tags="bubble")
-            self.canvas.itemconfigure("bubble", state="hidden")
-            self.question_widget.bind("<Return>", self.handle_enter)
-            self.question_widget.bind("<KP_Enter>", self.handle_enter)
-            self.question_widget.bind("<KeyRelease-Return>", self.release_enter)
-            self.question_widget.bind("<KeyRelease-KP_Enter>", self.release_enter)
-            self.question_widget.bind("<FocusOut>", self.release_enter)
-            self.root.bind("<ButtonPress-1>", lambda e: self.begin_selection(e.x_root, e.y_root))
-            self.root.bind("<B1-Motion>", lambda e: self.drag_selection(e.x_root, e.y_root))
-            self.root.bind("<ButtonRelease-1>", lambda e: self.finish_selection(e.x_root, e.y_root))
-            self.root.bind("<Escape>", lambda e: self.close())
-            self.root.protocol("WM_DELETE_WINDOW", self.close)
-            self.root.report_callback_exception = on_callback_error
-            self.root.update_idletasks()
-            self.root.deiconify()
-            self.native.place_overlay(self.root)
-            self.root.wait_visibility()
-            self.root.grab_set_global()
-            self.root.focus_force()
-            self.root.after(100, self._poll)
-            self.root.mainloop()
-            if callback_error is not None:
-                raise callback_error
-        finally:
-            self.close()
-
-    def close(self):
-        if self.closed:
-            return
-        self.closed = True
-        self.waiting_visible = False
-        self.generation += 1
-        try:
-            if self.on_close is not None:
-                self.on_close()
-        finally:
-            try:
-                try:
-                    self._stop_spinner()
-                finally:
-                    if self.root is not None:
-                        try:
-                            # A reused worker must not inherit Tcl timers from the previous root.
-                            for timer in self.root.tk.splitlist(self.root.tk.call("after", "info")):
-                                self.root.after_cancel(timer)
-                        finally:
-                            self.root.destroy()
-            finally:
-                try:
-                    if self.runner is not None:
-                        try:
-                            self.runner.cancel(self.request)
-                        finally:
-                            self.runner.close()
-                finally:
-                    self.desktop.close()
-
-
-def run_screenshot_overlay(provider, stop_event=None, focus_event=None, *, on_close=None):
-    from interfaces.tk_lifecycle import ui_thread_gc
-
-    with ui_thread_gc():
-        overlay = ScreenshotOverlay(provider, stop_event, focus_event, on_close=on_close)
-        try:
-            overlay.run()
-        finally:
-            overlay.close()
-            # Drop the owner before the main-thread cyclic collection at scope exit.
-            del overlay
-
+    def closeEvent(self, event):
+        if not self._closed:
+            self._closed = True
+            self.generation += 1
+            self._cancel_request()
+            self.spinner.stop()
+            self.closed.emit()
+        event.accept()

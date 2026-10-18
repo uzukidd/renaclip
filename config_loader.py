@@ -16,6 +16,7 @@ DEFAULT_SETTINGS = {
     "GEMINI_USE_BROWSER_COOKIE": False,
     "BACKEND": "openai",
     "HOTKEY_MODIFIER": "ctrl",
+    "START_WITH_WINDOWS": False,
     "SCREENSHOT_QA_ENABLED": False,
     "SCREENSHOT_QA_WEB_SEARCH": False,
     "OPENAI_API_KEY": "",
@@ -161,7 +162,7 @@ def get_active_openai_provider(settings: dict) -> dict:
 
 
 def load_config() -> tuple[list[dict], dict]:
-    gems: list[dict] = []
+    gems: list[dict] = list(DEFAULT_GEMS)
     settings = dict(DEFAULT_SETTINGS)
     if CONFIG_PATH.exists():
         try:
@@ -178,7 +179,7 @@ def load_config() -> tuple[list[dict], dict]:
                 json.dump({"gems": gems, "settings": settings}, f, ensure_ascii=False, indent=2)
         except OSError:
             pass
-    if not gems:
+    if not isinstance(gems, list):
         gems = list(DEFAULT_GEMS)
     normalize_openai_providers(settings)
     return gems, settings

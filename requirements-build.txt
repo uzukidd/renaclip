@@ -1,0 +1,2 @@
+# Install alongside requirements.txt to build Windows distributions
+PyInstaller>=6.11,<7
