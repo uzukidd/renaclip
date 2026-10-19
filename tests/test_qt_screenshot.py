@@ -69,6 +69,25 @@ class ScreenshotTests(unittest.TestCase):
         self.assertEqual(doc.find("Source").charFormat().anchorHref(), "https://example.com")
         self.assertEqual(self.overlay.model_caption, "vision / High")
         self.assertNotIn("SECRET", self.overlay.answer_caption.text())
+    def test_progressive_matrix_and_inline_formulas(self):
+        self.select()
+        self.overlay.send_question("Explain the matrix")
+        token = self.overlay.generation
+        self.overlay.receive_delta(token, r"Inline \(\hat{x}_i^m\)." + "\n\n" + r"\[\begin{bmatrix}x\\")
+        APP.processEvents()
+        browser = self.overlay.answer_widget
+        self.assertEqual(len(browser.formula_sources), 1)
+        self.assertIn(r"\begin{bmatrix}", browser.toPlainText())
+        self.overlay.receive_delta(token, r"y\\1\end{bmatrix}\]")
+        APP.processEvents()
+        self.assertEqual(len(browser.formula_sources), 2)
+        self.assertNotIn(r"\begin{bmatrix}", browser.toPlainText())
+        self.assertTrue(self.overlay.answer_visible)
+        self.assertLessEqual(self.overlay.answer_bounds.height(), 560)
+        self.overlay.receive_result(token, self.overlay.answer)
+        self.assertEqual(len(browser.formula_sources), 2)
+        self.assertFalse(self.overlay.pending)
+
     def test_reselection_cancel_and_stale_callbacks(self):
         self.select(); self.overlay.send_question("old")
         token=self.overlay.generation

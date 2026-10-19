@@ -134,6 +134,8 @@ Switch between **Gemini** and **OpenAI** backends. Each section shows the releva
 
 Enable **Screenshot Q&A** in **Settings** and save. Press the configured hotkey modifier plus `0` (for example, `Ctrl+Shift+0`) to start it. Drag to select a region of the screen, then type a question in the panel on the right and press **Enter** to send; use **Shift+Enter** for a new line. A thinking indicator appears while the answer is being generated, and the completed answer can be scrolled. Click a completed Q&A bubble to edit and resubmit the question. Click outside the selected region and Q&A bubbles to select a new screenshot, or press **Esc** to exit.
 
+Answers support Markdown and offline LaTeX formulas: `\(...\)` / `$...$` for inline math and `\[...\]` / `$$...$$` for display math, including matrices. The bundled MathJax renderer produces local SVG images using Qt, without a browser engine or network downloads. Incomplete formulas remain readable while streaming and render when their closing delimiter arrives. Copying a formula preserves its original LaTeX. Wide matrices can be scrolled horizontally.
+
 ![image-20260906120554904](README.assets/image-20260906120554904.png)
 
 ---
