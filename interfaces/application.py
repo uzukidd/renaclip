@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal, QTimer, QLockFile, QStandardPaths
-from PySide6.QtGui import QIcon, QAction
+from PySide6.QtGui import QIcon, QAction, QCursor
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QMessageBox
 
 import backend
@@ -30,6 +30,8 @@ class Runtime(QObject):
         self.window = MainWindow(executor=self.executor)
         self.screenshot = ScreenshotQAController(self.executor, self)
         self.handles = []
+        self.skill_popups = set()
+        self._popup_requests = {}
         self.hooks_enabled = hooks
         self.closed = False
         self.skill_requested.connect(self.run_skill)
@@ -117,7 +119,7 @@ class Runtime(QObject):
             self.notify("RenaClip", "Could not capture this desktop. Try again.")
 
     def run_skill(self, index):
-        if self.closed or index >= len(self.state.specs):
+        if self.closed or index < 0 or index >= len(self.state.specs):
             return
         # Clipboard access stays on the Qt UI thread, including under async callbacks.
         text = self.app.clipboard().text()
@@ -127,10 +129,34 @@ class Runtime(QObject):
         from copy import deepcopy
         state = deepcopy(self.state)
         spec = state.specs[index]
-        self.notify("RenaClip", f"Processing with {spec['name']}...")
-        self.executor.submit(self._request(state, index, text),
-                             on_result=lambda result: self._copy_result(result, spec['name']),
-                             on_error=lambda exc: self.notify("RenaClip", "Request failed. See renaclip.log."))
+        if spec.get('popup_mode', False):
+            from interfaces.skill_popup import SkillPopup
+            popup = SkillPopup(spec['name'], QCursor.pos())
+            self.skill_popups.add(popup)
+            popup.closed.connect(lambda: self._release_popup(popup))
+            state.openai_streaming = True
+            request = self.executor.submit(
+                self._request(state, index, text, on_delta=popup.append_text),
+                on_result=popup.finish,
+                on_error=lambda exc: popup.fail('Request failed. Check your model and connection.'),
+            )
+            self._popup_requests[popup] = request
+            popup.attach_request(request)
+        else:
+            self.notify("RenaClip", f"Processing with {spec['name']}...")
+            self.executor.submit(self._request(state, index, text),
+                                 on_result=lambda result: self._copy_result(result, spec['name']),
+                                 on_error=lambda exc: self.notify("RenaClip", "Request failed. See renaclip.log."))
+
+    def _release_popup(self, popup):
+        self.skill_popups.discard(popup)
+        # Keep the QObject alive for queued callbacks; release only when its
+        # request is finished so late stream events can safely be ignored.
+        request = self._popup_requests.pop(popup, None)
+        if request is None or request.done():
+            popup.deleteLater()
+        else:
+            request.add_done_callback(lambda _: self.executor.post(popup.deleteLater))
 
     def set_clipboard(self, text):
         if not self.closed:
@@ -140,7 +166,13 @@ class Runtime(QObject):
         self.app.clipboard().setText(result)
         self.notify("RenaClip", f"Clipboard updated by {name}.")
 
-    async def _request(self, state, index, text):
+    async def _request(self, state, index, text, on_delta=None):
+        def publish(delta, accumulated):
+            if on_delta is not None:
+                self.executor.post(on_delta, delta)
+            else:
+                self.executor.post(self.set_clipboard, accumulated)
+
         if state.backend == "openai":
             from openai_client import get_openai_client
             from config_loader import reasoning_request_options
@@ -167,7 +199,7 @@ class Runtime(QObject):
                                     raise RuntimeError("Response did not complete")
                                 if event.type == "response.output_text.delta":
                                     parts.append(event.delta)
-                                    self.executor.post(self.set_clipboard, "".join(parts))
+                                    publish(event.delta, "".join(parts))
                         finally:
                             await stream.close()
                         return "".join(parts)
@@ -180,7 +212,7 @@ class Runtime(QObject):
                         async for chunk in stream:
                             if chunk.choices and chunk.choices[0].delta.content:
                                 parts.append(chunk.choices[0].delta.content)
-                                self.executor.post(self.set_clipboard, "".join(parts))
+                                publish(chunk.choices[0].delta.content, "".join(parts))
                     finally:
                         await stream.close()
                     return "".join(parts)
@@ -197,6 +229,14 @@ class Runtime(QObject):
             gem = await update_gem(client, gem, name=RENACLIP_PREFIX + spec["name"],
                                    prompt=spec.get("prompt", ""), description=spec.get("description", ""))
             chat = client.start_chat(gem=gem, model=state.model)
+            if on_delta is not None:
+                parts = []
+                async for chunk in chat.send_message_stream(text):
+                    delta = chunk.text_delta or ''
+                    if delta:
+                        parts.append(delta)
+                        publish(delta, ''.join(parts))
+                return ''.join(parts)
             return (await chat.send_message(text)).text or ""
         finally:
             if chat is not None:
@@ -209,6 +249,8 @@ class Runtime(QObject):
         self.closed = True
         self.timer.stop()
         self.screenshot.close()
+        for popup in list(self.skill_popups):
+            popup.close()
         if self.handles:
             import keyboard
             for handle in self.handles:
@@ -231,6 +273,7 @@ def run(argv=None):
                         format="%(asctime)s %(levelname)s %(message)s", encoding="utf-8")
     app = QApplication.instance() or QApplication(sys.argv[:1])
     app.setApplicationName("RenaClip")
+    app.setWindowIcon(QIcon(str(TRAY_ICON_PATH)))
     app.setQuitOnLastWindowClosed(False)
     apply_qt_theme(app)
     lock = QLockFile(str(DATA_DIR / "renaclip-instance.lock"))

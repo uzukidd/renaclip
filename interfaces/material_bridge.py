@@ -98,7 +98,8 @@ class MaterialBridge(QObject):
             return self._fail('This skill no longer exists. Reopen the editor.')
         entry = dict(skills[index]) if index >= 0 else {}
         entry.update(name=str(value['name']).strip(), description=str(value.get('description','')),
-                     prompt=str(value.get('prompt','')), web_search=bool(value.get('web_search',False)))
+                     prompt=str(value.get('prompt','')), web_search=bool(value.get('web_search',False)),
+                     popup_mode=bool(value.get('popup_mode',False)))
         if index < 0:
             skills.append(entry)
         else:

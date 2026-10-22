@@ -6,6 +6,7 @@ root = Path(SPECPATH)
 datas = [(str(root / 'assets' / name), 'assets')
          for name in ('renaclip_icon.ico', 'renaclip_icon.png', 'renaclip_logo.png')]
 datas += [(str(root / 'interfaces' / 'qml'), 'interfaces/qml')]
+datas += [(str(root / 'interfaces' / 'math_assets'), 'interfaces/math_assets')]
 for package in ('certifi', 'gemini_webapi'):
     datas += collect_data_files(package)
 for package in ('openai', 'gemini-webapi', 'browser-cookie3'):

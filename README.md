@@ -4,9 +4,14 @@
 
 **R**eal-time **E**nhanced **N**eural **A**ssistant for **Clip**board — use **Gemini / OpenAI / DeepSeek**-powered "gems/skills" to process clipboard text with global hotkeys.
 
+
 <img src="README.assets/demo_0.gif" style="zoom:45%;" />
 
+<img src="README.assets/demo_2.gif" style="zoom:45%;" />
+
 <img src="README.assets/demo_1.gif" style="zoom:45%;" />
+
+
 
 ---
 
@@ -115,6 +120,10 @@ The main UI and screenshot overlay share the fixed dark/pink Qt design tokens an
 
 Set the skill **name**, **description**, and **prompt** (system instruction). Enable **Web search** to include `tools=[{"type": "web_search"}]` in that gem's OpenAI request; the selected provider must support this tool type.
 
+Enable **Popup mode** in a Skill editor to stream its response into a topmost window beside the mouse cursor instead of updating the clipboard. The window opens immediately with a spinner and **Thinking...**, then switches to the streamed answer when text arrives; drag its title bar to move it, select text and press **Ctrl+C** or click **Copy**, and double-click the popup to close it. Closing also cancels unfinished generation. Popup mode requests streaming even when provider streaming is disabled. Each Skill stores this option locally as `popup_mode` (default `false`).
+
+**弹窗模式：** 在 Skill 编辑窗口勾选 **Popup mode** 并保存。触发后立即在鼠标光标旁显示置顶弹窗，以转圈和 **Thinking...** 等待，收到文字后切换为流式回答，不自动修改剪贴板；拖动标题栏可移动，选择文字后按 **Ctrl+C** 或点击 **Copy** 可复制，双击弹窗可关闭并取消未完成生成。弹窗模式会强制请求流式输出，该选项按 Skill 保存，默认关闭。
+
 ![Edit Gem](README.assets/edit.png)
 
 ### 3. Settings
@@ -133,6 +142,8 @@ Switch between **Gemini** and **OpenAI** backends. Each section shows the releva
 ### 4. Screenshot QA
 
 Enable **Screenshot Q&A** in **Settings** and save. Press the configured hotkey modifier plus `0` (for example, `Ctrl+Shift+0`) to start it. Drag to select a region of the screen, then type a question in the panel on the right and press **Enter** to send; use **Shift+Enter** for a new line. A thinking indicator appears while the answer is being generated, and the completed answer can be scrolled. Click a completed Q&A bubble to edit and resubmit the question. Click outside the selected region and Q&A bubbles to select a new screenshot, or press **Esc** to exit.
+
+Answers support Markdown and offline LaTeX formulas: `\(...\)` / `$...$` for inline math and `\[...\]` / `$$...$$` for display math, including matrices. The bundled MathJax renderer produces local SVG images using Qt, without a browser engine or network downloads. Incomplete formulas remain readable while streaming and render when their closing delimiter arrives. Copying a formula preserves its original LaTeX. Wide matrices can be scrolled horizontally.
 
 ![image-20260906120554904](README.assets/image-20260906120554904.png)
 

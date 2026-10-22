@@ -4,14 +4,17 @@ All coordinates are Qt logical pixels. Network callbacks arrive through the
 application's AsyncExecutor; the overlay never owns a thread or event loop.
 """
 import base64
+import html
+import hashlib
 from copy import deepcopy
 from urllib.parse import urlsplit
 
-from PySide6.QtCore import QByteArray, QBuffer, QIODevice, QPoint, QRect, QRectF, Qt, QTimer, Signal, QEvent, QThread, QUrl
-from PySide6.QtGui import QColor, QDesktopServices, QFont, QPainter, QPen, QPixmap, QTextDocument
+from PySide6.QtCore import QByteArray, QBuffer, QIODevice, QPoint, QRect, QRectF, Qt, QTimer, Signal, QEvent, QThread, QUrl, QMimeData
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QPainter, QPen, QPixmap, QTextDocument, QTextCursor, QTextImageFormat, QTextCharFormat, QTextOption
 from PySide6.QtWidgets import QApplication, QLabel, QPlainTextEdit, QTextBrowser, QWidget, QVBoxLayout, QHBoxLayout
 
 from interfaces import theme
+from interfaces.formula_rendering import FormulaRenderer, protect_formulas
 from openai_client.screenshot_chat import ScreenshotConversation
 
 
@@ -59,7 +62,89 @@ class QuestionEdit(QPlainTextEdit):
 
 
 class AnswerBrowser(QTextBrowser):
-    """Allow visible Markdown and navigation without fetching remote resources."""
+    """Markdown with local formula images; remote resources remain disabled."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setLineWrapMode(QTextBrowser.LineWrapMode.WidgetWidth)
+        self.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+        self.formula_renderer = FormulaRenderer()
+        self.formula_sources = {}
+
+    def clear(self):
+        self.formula_sources.clear()
+        super().clear()
+
+    def setMarkdown(self, source):
+        protected, formulas = protect_formulas(source)
+        self.formula_sources.clear()
+        super().setMarkdown(protected)
+        document = self.document()
+        for formula in formulas:
+            cursor = document.find(formula.marker)
+            if cursor.isNull():
+                continue
+            if not formula.complete:
+                cursor.insertText(formula.source)
+                continue
+            try:
+                image, width, height = self.formula_renderer.render(
+                    formula.tex, formula.display, theme.TEXT, theme.BODY_SIZE,
+                    self.devicePixelRatioF())
+            except (OSError, RuntimeError, ValueError):
+                # Unsupported/unfinished TeX remains readable without allowing
+                # Markdown to reinterpret its underscores and matrix rows.
+                cursor.insertText(formula.source)
+                continue
+            # Stable names reuse Qt's image resources across streaming updates.
+            digest = hashlib.sha256((formula.source + str(self.devicePixelRatioF())).encode("utf-8")).hexdigest()
+            name = "renaclip-math:" + digest
+            document.addResource(QTextDocument.ResourceType.ImageResource, QUrl(name), image)
+            self.formula_sources[name] = formula.source
+            image_format = QTextImageFormat()
+            image_format.setName(name)
+            image_format.setWidth(width)
+            image_format.setHeight(height)
+            image_format.setVerticalAlignment(QTextCharFormat.VerticalAlignment.AlignMiddle)
+            if formula.display and cursor.selectionStart() > cursor.block().position():
+                cursor.setPosition(cursor.selectionStart())
+                cursor.insertBlock()
+                cursor = document.find(formula.marker)
+            cursor.insertImage(image_format)
+            if formula.display and not cursor.atBlockEnd():
+                cursor.insertBlock()
+
+    def createMimeDataFromSelection(self):
+        original_mime = super().createMimeDataFromSelection()
+        mime = QMimeData()
+        for format_name in original_mime.formats():
+            mime.setData(format_name, original_mime.data(format_name))
+        selection = self.textCursor()
+        start, end = selection.selectionStart(), selection.selectionEnd()
+        text = selection.selectedText().encode("utf-16-le", errors="surrogatepass")
+        replacements = []
+        block = self.document().begin()
+        while block.isValid():
+            iterator = block.begin()
+            while not iterator.atEnd():
+                fragment = iterator.fragment()
+                fmt = fragment.charFormat()
+                if fmt.isImageFormat():
+                    original = self.formula_sources.get(fmt.toImageFormat().name())
+                    if original is not None:
+                        for position in range(max(start, fragment.position()), min(end, fragment.position() + fragment.length())):
+                            replacements.append((position - start, original))
+                iterator += 1
+            block = block.next()
+        for offset, original in reversed(replacements):
+            text = text[:offset * 2] + original.encode("utf-16-le") + text[(offset + 1) * 2:]
+        text = text.decode("utf-16-le", errors="surrogatepass").replace("\u2029", "\n")
+        mime.setText(text)
+        # An external app cannot resolve document-local formula image URLs.
+        if replacements:
+            mime.setHtml("<pre>" + html.escape(text) + "</pre>")
+        return mime
+
     def loadResource(self, resource_type, name):
         return QByteArray()
 

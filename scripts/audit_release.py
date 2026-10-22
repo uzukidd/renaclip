@@ -24,7 +24,11 @@ def audit(folder):
     for resource in ('Main.qml', 'icons/edit.svg', 'icons/delete_outline.svg', 'icons/LICENSE'):
         if not (qml / resource).is_file():
             raise RuntimeError('Material resource is missing: ' + resource)
-    print('Release audit passed: Qt and Material resources present; private config and old UI runtimes absent.')
+    math_assets = folder / '_internal' / 'interfaces' / 'math_assets'
+    for resource in ('renderer.bundle.js', 'LICENSE.mathjax'):
+        if not (math_assets / resource).is_file():
+            raise RuntimeError('Offline formula resource is missing: ' + resource)
+    print('Release audit passed: Qt, Material and offline formula resources present; private config and old UI runtimes absent.')
 
 
 if __name__ == '__main__':

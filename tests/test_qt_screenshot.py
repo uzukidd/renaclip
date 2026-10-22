@@ -52,6 +52,19 @@ class ScreenshotTests(unittest.TestCase):
         self.assertTrue(self.overlay.waiting_visible)
         self.assertFalse(self.overlay.answer_visible)
         self.assertEqual(len(self.executor.calls), 1)
+    def test_long_answer_wraps_without_horizontal_scrollbar(self):
+        self.select()
+        self.overlay.send_question('What?')
+        self.overlay.receive_result(self.overlay.generation,
+            '**Long answer**\n\n' + 'https://example.com/' + 'longsegment' * 70 + '\n\n' + 'A normal answer. ' * 200)
+        APP.processEvents()
+        browser = self.overlay.answer_widget
+        self.assertEqual(browser.horizontalScrollBarPolicy(), Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.assertFalse(browser.horizontalScrollBar().isVisible())
+        self.assertGreater(browser.verticalScrollBar().maximum(), 0)
+        self.assertGreater(browser.viewport().height(), 0)
+        self.assertLessEqual(browser.document().idealWidth(), browser.viewport().width() + 1)
+
     def test_progressive_markdown_and_caption(self):
         self.select()
         self.overlay.send_question("What?")
@@ -69,6 +82,25 @@ class ScreenshotTests(unittest.TestCase):
         self.assertEqual(doc.find("Source").charFormat().anchorHref(), "https://example.com")
         self.assertEqual(self.overlay.model_caption, "vision / High")
         self.assertNotIn("SECRET", self.overlay.answer_caption.text())
+    def test_progressive_matrix_and_inline_formulas(self):
+        self.select()
+        self.overlay.send_question("Explain the matrix")
+        token = self.overlay.generation
+        self.overlay.receive_delta(token, r"Inline \(\hat{x}_i^m\)." + "\n\n" + r"\[\begin{bmatrix}x\\")
+        APP.processEvents()
+        browser = self.overlay.answer_widget
+        self.assertEqual(len(browser.formula_sources), 1)
+        self.assertIn(r"\begin{bmatrix}", browser.toPlainText())
+        self.overlay.receive_delta(token, r"y\\1\end{bmatrix}\]")
+        APP.processEvents()
+        self.assertEqual(len(browser.formula_sources), 2)
+        self.assertNotIn(r"\begin{bmatrix}", browser.toPlainText())
+        self.assertTrue(self.overlay.answer_visible)
+        self.assertLessEqual(self.overlay.answer_bounds.height(), 560)
+        self.overlay.receive_result(token, self.overlay.answer)
+        self.assertEqual(len(browser.formula_sources), 2)
+        self.assertFalse(self.overlay.pending)
+
     def test_reselection_cancel_and_stale_callbacks(self):
         self.select(); self.overlay.send_question("old")
         token=self.overlay.generation
