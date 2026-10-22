@@ -52,6 +52,19 @@ class ScreenshotTests(unittest.TestCase):
         self.assertTrue(self.overlay.waiting_visible)
         self.assertFalse(self.overlay.answer_visible)
         self.assertEqual(len(self.executor.calls), 1)
+    def test_long_answer_wraps_without_horizontal_scrollbar(self):
+        self.select()
+        self.overlay.send_question('What?')
+        self.overlay.receive_result(self.overlay.generation,
+            '**Long answer**\n\n' + 'https://example.com/' + 'longsegment' * 70 + '\n\n' + 'A normal answer. ' * 200)
+        APP.processEvents()
+        browser = self.overlay.answer_widget
+        self.assertEqual(browser.horizontalScrollBarPolicy(), Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.assertFalse(browser.horizontalScrollBar().isVisible())
+        self.assertGreater(browser.verticalScrollBar().maximum(), 0)
+        self.assertGreater(browser.viewport().height(), 0)
+        self.assertLessEqual(browser.document().idealWidth(), browser.viewport().width() + 1)
+
     def test_progressive_markdown_and_caption(self):
         self.select()
         self.overlay.send_question("What?")

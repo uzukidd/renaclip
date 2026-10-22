@@ -30,4 +30,4 @@ CONFIG_PATH = DATA_DIR / "gem_config.json"
 UI_LOCK_PATH = DATA_DIR / ".renaclip_ui.lock"
 RESOURCE_ROOT = Path(getattr(sys, "_MEIPASS", str(APP_ROOT)))
 ASSETS_DIR = RESOURCE_ROOT / "assets"
-TRAY_ICON_PATH = ASSETS_DIR / "renaclip_icon.png"
+TRAY_ICON_PATH = ASSETS_DIR / "renaclip_icon.ico"

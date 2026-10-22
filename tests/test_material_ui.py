@@ -72,12 +72,16 @@ class MaterialUiTests(unittest.TestCase):
         field = self.root.findChild(QObject,'skillName')
         self.assertIsNotNone(field)
         field.setProperty('text','Edited through Material')
+        checkbox = self.root.findChild(QObject,'skillPopupMode')
+        self.assertIsNotNone(checkbox)
+        checkbox.setProperty('checked',True)
         button = self.find_visual('skillDialogSave')
         self.assertIsNotNone(button)
         point = button.mapToScene(QPointF(button.width()/2,button.height()/2)).toPoint()
         QTest.mouseClick(self.root,Qt.MouseButton.LeftButton,Qt.KeyboardModifier.NoModifier,point)
         QTest.qWait(250)
         self.assertEqual(config_loader.load_config()[0][0]['name'],'Edited through Material')
+        self.assertTrue(config_loader.load_config()[0][0]['popup_mode'])
 
     def test_window_close_hides_when_tray_enabled(self):
         self.window.hide_on_close = True

@@ -33,6 +33,7 @@ ApplicationWindow {
         var entry = index >= 0 ? bridge.skills[index] : {}
         skillName.text = text(entry.name); skillDescription.text = text(entry.description)
         skillPrompt.text = text(entry.prompt); skillOnline.checked = !!entry.web_search
+        skillPopup.checked = !!entry.popup_mode
         skillDialog.open()
     }
     function openSettings() {
@@ -351,7 +352,7 @@ ApplicationWindow {
         commit: function() {
             if (!skillName.text.trim()) { root.localError = "Please enter a skill name."; return false }
             root.localError = ""
-            return bridge.saveSkill(root.editIndex, {name:skillName.text.trim(), description:skillDescription.text, prompt:skillPrompt.text, web_search:skillOnline.checked})
+            return bridge.saveSkill(root.editIndex, {name:skillName.text.trim(), description:skillDescription.text, prompt:skillPrompt.text, web_search:skillOnline.checked, popup_mode:skillPopup.checked})
         }
         ColumnLayout { width: skillDialog.availableWidth; spacing: 14
             ErrorLabel {}
@@ -359,6 +360,8 @@ ApplicationWindow {
             MultilineField { id: skillDescription; objectName: "skillDescription"; Layout.fillWidth: true; Layout.preferredHeight: 65; label: "Description" }
             MultilineField { id: skillPrompt; objectName: "skillPrompt"; Layout.fillWidth: true; Layout.preferredHeight: 110; label: "Prompt" }
             CheckBox { id: skillOnline; objectName: "skillWebSearch"; text: "Enable web search" }
+            CheckBox { id: skillPopup; objectName: "skillPopupMode"; text: "Popup mode" }
+            Label { text: "Stream near the cursor without changing the clipboard."; font.pixelSize: 11; color: paletteTokens.muted; Layout.fillWidth: true; wrapMode: Text.Wrap }
         }
     }
     ProductionDialog {
