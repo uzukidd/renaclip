@@ -4,9 +4,14 @@
 
 **R**eal-time **E**nhanced **N**eural **A**ssistant for **Clip**board — use **Gemini / OpenAI / DeepSeek**-powered "gems/skills" to process clipboard text with global hotkeys.
 
+
 <img src="README.assets/demo_0.gif" style="zoom:45%;" />
 
+<img src="README.assets/demo_2.gif" style="zoom:45%;" />
+
 <img src="README.assets/demo_1.gif" style="zoom:45%;" />
+
+
 
 ---
 
