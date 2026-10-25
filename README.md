@@ -35,16 +35,6 @@ RenaClip runs a clipboard service in the system tray. You define **skills** (eac
 - **UI**: The production main window and dialogs use **PySide6 / Qt Quick Material**, matching the compact layout shown below. Screenshot Q&A and the tray share the same Qt application and UI thread. No Flet, Flutter or Tkinter runtime is required.
 - **Tray**: Service runs in the background; left-click the tray icon to open the UI, or use the menu to exit.
 
-### Material design preview
-
-A separate Qt Quick Material prototype is available for visual review:
-
-```powershell
-python -m interfaces.material_preview
-```
-
-The approved design is now the production UI launched by `python main.py`. Model/reasoning selections, Skill edits/deletes and drag reordering persist immediately. Settings and provider changes use an isolated draft: **Save** applies them and **Cancel** discards them. The optional preview above remains a demo-only visual sandbox; its changes do not affect the real configuration. Official Material SVG icons and QML files are bundled with the Windows release.
-
 ### Supported Backends
 
 | Backend                     | Description                                                                                                                                                    |
@@ -143,7 +133,13 @@ Switch between **Gemini** and **OpenAI** backends. Each section shows the releva
 
 Enable **Screenshot Q&A** in **Settings** and save. Press the configured hotkey modifier plus `0` (for example, `Ctrl+Shift+0`) to start it. Drag to select a region of the screen, then type a question in the panel on the right and press **Enter** to send; use **Shift+Enter** for a new line. A thinking indicator appears while the answer is being generated, and the completed answer can be scrolled. Click a completed Q&A bubble to edit and resubmit the question. Click outside the selected region and Q&A bubbles to select a new screenshot, or press **Esc** to exit.
 
-Answers support Markdown and offline LaTeX formulas: `\(...\)` / `$...$` for inline math and `\[...\]` / `$$...$$` for display math, including matrices. The bundled MathJax renderer produces local SVG images using Qt, without a browser engine or network downloads. Incomplete formulas remain readable while streaming and render when their closing delimiter arrives. Copying a formula preserves its original LaTeX. Wide matrices can be scrolled horizontally.
+<a id="screenshot-pin"></a>
+
+**Pin the capture UI** ([中文说明](#screenshot-pin-zh)): Click **Pin** while waiting, during generation, or after completion. The original screenshot selection, question editor, and answer bubble stay in place with the same layout and controls. Only the desktop shading disappears; clicks outside these visible regions go directly to your desktop and other applications. Output continues in the original answer browser. Drag the screenshot, answer caption, or bubble padding to move the entire group. Text selection, links, scrolling, and editing/resubmitting a completed question remain available. The **Pin** button becomes **Close**; click it or press **Esc** while this UI has focus to close the group and cancel any unfinished request. You can start another capture while existing groups stay pinned. Pins last only for this application session.
+
+<a id="screenshot-pin-zh"></a>
+
+**固定原截屏界面**（[English](#screenshot-pin)）：等待首个输出、生成过程中或回答完成后都可点击 **Pin**。原截图选区、问题输入框和回答气泡保留在原处，布局和控件保持一致；只移除桌面黑色遮罩，界面可见区域以外的点击会直接交给桌面和其他应用。回答继续在原回答框中更新。拖动截图、回答标题或气泡留白处，可将整组界面一起移动；文字选择、链接、滚动和完成后编辑问题重新发送等操作仍然可用。**Pin** 会变成 **Close**，点击它或在此界面获得焦点时按 **Esc** 可关闭整组界面，并取消未完成的请求。固定后可以再次启动截屏，已有的固定界面会保留。固定结果仅在本次应用运行期间保留。
 
 ![image-20260906120554904](README.assets/image-20260906120554904.png)
 
@@ -196,14 +192,6 @@ python -m PyInstaller --noconfirm --distpath out/material --workpath build/pyins
 ```
 
 Run `out/material/RenaClip/RenaClip.exe`. Distribute the **entire RenaClip folder**, including `_internal`; users do not need Python or Conda. The spec collects Qt Quick Material/QML modules, Qt Widgets for the screenshot overlay, official Material SVG icons and backend dependencies, and excludes the former Flet/Tk runtimes and Qt WebEngine. The build uses folder mode to avoid single-file extraction delays. Configuration files, API keys and browser profiles are not included.
-
-For a startup check without global hooks or provider requests:
-
-```powershell
-out/material/RenaClip/RenaClip.exe --smoke-test
-```
-
-Use `python main.py --no-hotkeys` for UI diagnostics or `--hidden` to start in the tray. Runtime logs are written to `renaclip.log` in the configuration directory. Older README screenshots illustrate the compact layout, now implemented with Qt Quick Material.
 
 ## License
 
