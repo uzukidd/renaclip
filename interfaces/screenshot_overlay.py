@@ -10,10 +10,12 @@ from copy import deepcopy
 from urllib.parse import urlsplit
 
 from PySide6.QtCore import QByteArray, QBuffer, QIODevice, QPoint, QRect, QRectF, Qt, QTimer, Signal, QEvent, QThread, QUrl, QMimeData
-from PySide6.QtGui import QColor, QDesktopServices, QFont, QPainter, QPen, QPixmap, QTextDocument, QTextCursor, QTextImageFormat, QTextCharFormat, QTextOption, QRegion
-from PySide6.QtWidgets import QApplication, QLabel, QPlainTextEdit, QTextBrowser, QWidget, QVBoxLayout, QHBoxLayout, QPushButton
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QPainter, QPen, QPixmap, QTextDocument, QTextCursor, QTextImageFormat, QTextCharFormat, QTextOption, QRegion, QIcon
+from PySide6.QtWidgets import QApplication, QLabel, QPlainTextEdit, QTextBrowser, QWidget, QVBoxLayout, QHBoxLayout, QToolButton
 
 from interfaces import theme
+from interfaces.screenshot_layout import place_question, place_answer
+from constants import RESOURCE_ROOT
 from interfaces.formula_rendering import FormulaRenderer, protect_formulas
 from openai_client.screenshot_chat import ScreenshotConversation
 
@@ -214,11 +216,26 @@ class ScreenshotOverlay(QWidget):
         self.question_widget.setPlaceholderText("Ask something...")
         self.question_widget.submit.connect(self.send_question)
         qlayout.addWidget(self.question_widget)
-        self.waiting_pin_button = QPushButton("Pin", self.question_bubble)
-        self.waiting_pin_button.setToolTip("Pin screenshot and continue in background / 固定截图并在后台继续生成")
-        self.waiting_pin_button.clicked.connect(self.pin_answer)
-        self.waiting_pin_button.hide()
-        qlayout.addWidget(self.waiting_pin_button)
+        self.pin_button = QToolButton(self)
+        self.pin_button.setObjectName('capturePin')
+        self.pin_button.setFixedSize(30, 30)
+        glyph = QPixmap(48, 48)
+        glyph.fill(Qt.GlobalColor.transparent)
+        icon_painter = QPainter(glyph)
+        icon = QIcon(str(RESOURCE_ROOT / 'interfaces' / 'qml' / 'icons' / 'push_pin.svg'))
+        icon.paint(icon_painter, 0, 0, 48, 48)
+        icon_painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+        icon_painter.fillRect(glyph.rect(), QColor(theme.ACCENT_LIGHT))
+        icon_painter.end()
+        glyph.setDevicePixelRatio(2)
+        self.pin_button.setIcon(QIcon(glyph))
+        self.pin_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.pin_button.setToolTip('Pin capture / 固定截图')
+        self.pin_button.setStyleSheet(
+            f'QToolButton {{background:{theme.SURFACE};border:1px solid {theme.ACCENT_LIGHT};border-radius:8px;padding:3px;}}'
+            f'QToolButton:hover {{background:{theme.SURFACE_ACCENT};}}')
+        self.pin_button.clicked.connect(self.pin_answer)
+        self.pin_button.hide()
         self.answer_bubble = QWidget(self)
         self.answer_bubble.setObjectName("answerBubble")
         alayout = QVBoxLayout(self.answer_bubble)
@@ -231,12 +248,6 @@ class ScreenshotOverlay(QWidget):
         self.header_spinner = SpinnerWidget(self.answer_bubble)
         self.header_spinner.hide()
         header.addWidget(self.header_spinner)
-        self.pin_button = QPushButton("Pin", self.answer_bubble)
-        self.pin_button.setToolTip("Pin answer to desktop / 将回答固定到桌面")
-        self.pin_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.pin_button.setEnabled(False)
-        self.pin_button.clicked.connect(self.pin_answer)
-        header.addWidget(self.pin_button)
         alayout.addLayout(header)
         self.answer_widget = AnswerBrowser(self.answer_bubble)
         self.answer_widget.setOpenLinks(False)
@@ -249,9 +260,6 @@ class ScreenshotOverlay(QWidget):
             QWidget#questionBubble {{background:{theme.SURFACE_ACCENT};border-radius:{theme.RADIUS}px;}}
             QWidget#answerBubble {{background:{theme.SURFACE};border-radius:{theme.RADIUS}px;}}
             QPlainTextEdit,QTextBrowser {{background:transparent;color:{theme.TEXT};border:0;selection-background-color:{theme.ACCENT};font-family:'{theme.FONT_FAMILY}';font-size:{theme.BODY_SIZE}px;}}
-            QPushButton {{background:{theme.SURFACE_ACCENT};color:{theme.ACCENT_LIGHT};border:0;border-radius:5px;padding:4px 10px;}}
-            QPushButton:hover {{background:{theme.SURFACE_RAISED};}}
-            QPushButton:disabled {{color:{theme.DISABLED};}}
             QScrollBar:vertical {{background:{theme.SURFACE};width:{theme.SCROLLBAR_WIDTH}px;margin:0;}}
             QScrollBar::handle:vertical {{background:{theme.ACCENT};min-height:24px;border-radius:4px;}}
             QScrollBar::handle:vertical:hover {{background:{theme.ACCENT_LIGHT};}}
@@ -295,8 +303,7 @@ class ScreenshotOverlay(QWidget):
         self.pending = self.sent = self.editing = False
         self.answer_visible = self.waiting_visible = False
         self.question = self.answer = ""
-        self.pin_button.setEnabled(False)
-        self.waiting_pin_button.hide()
+        self.pin_button.hide()
         self.question_widget.clear()
         self.answer_widget.clear()
         self.question_bubble.hide()
@@ -339,17 +346,23 @@ class ScreenshotOverlay(QWidget):
 
     def _place_panel(self):
         area = self._available()
-        width = min(360, area.width())
-        height = min(720, area.height())
-        y = max(area.top(), min(self.bounds.top(), area.bottom() - height + 1))
-        if self.bounds.right() + 12 + width <= area.right() + 1:
-            x = self.bounds.right() + 12
-        elif self.bounds.left() - 12 - width >= area.left():
-            x = self.bounds.left() - 12 - width
-        else:
-            x = max(area.left(), min(self.bounds.right() + 12, area.right() - width + 1))
-        self._max_panel = QRect(x, y, width, min(720, area.bottom() - y + 1))
-        self.question_bounds = QRect(x, y, width, min(96, max(24, self._max_panel.height() // 3)))
+        self._max_panel = QRect(area)
+        self.question_bounds = place_question(self.bounds, area)
+        self.answer_direction = None
+        self.waiting_bounds, self.waiting_direction = place_answer(self.question_bounds, area, 36)
+        self._place_pin_icon()
+
+    def _place_pin_icon(self):
+        # Overlay the pin inside the screenshot so its hit area remains available
+        # after the rest of the desktop is released by the native window mask.
+        x = max(self.bounds.left(), self.bounds.right() - self.pin_button.width() - 5)
+        y = self.bounds.top() + 6
+        self.pin_button.move(x, y)
+        self.pin_button.setEnabled(not self.is_pinned)
+        self.pin_button.setToolTip('Pinned; double-click image to close / 已固定，双击图片取消'
+                                   if self.is_pinned else 'Pin capture / 固定截图')
+        self.pin_button.show()
+        self.pin_button.raise_()
 
     def cropped_screenshot(self):
         ratio = self.snapshot.devicePixelRatio()
@@ -375,13 +388,11 @@ class ScreenshotOverlay(QWidget):
         self.question_widget.setPlainText(text)
         self.question_widget.setReadOnly(True)
         self.answer = ""
-        self.pin_button.setEnabled(False)
         self.answer_widget.clear()
         self.answer_bubble.hide()
         self.answer_visible = False
         self.waiting_visible = True
         self.pending, self.sent, self.editing = True, False, False
-        self.waiting_pin_button.show()
         self.generation += 1
         token = self.generation
         self.spinner.start()
@@ -450,33 +461,26 @@ class ScreenshotOverlay(QWidget):
         document = self.answer_widget.document()
         document.setTextWidth(max(1, self.question_bounds.width() - 2 * theme.CONTENT_PADDING - theme.SCROLLBAR_WIDTH - 8))
         desired = int(document.size().height()) + 2 * theme.CONTENT_PADDING + 34
-        available = max(1, self._max_panel.bottom() - self.question_bounds.bottom() - 10)
-        height = min(560, available, max(90, desired))
-        self.answer_bounds = QRect(self.question_bounds.x(), self.question_bounds.bottom() + 11, self.question_bounds.width(), height)
+        self.answer_bounds, self.answer_direction = place_answer(
+            self.question_bounds, self._max_panel, max(90, desired), preferred_direction=self.answer_direction)
         self.answer_bubble.setGeometry(self.answer_bounds)
-        self.answer_bubble.show()
+        self.answer_bubble.setVisible(not self.answer_bounds.isEmpty())
         self.header_spinner.setVisible(self.pending)
-        self.waiting_pin_button.hide()
-        self.pin_button.setEnabled(self.is_pinned or self.pending or self.sent)
         self._update_pin_mask()
         fm = self.answer_caption.fontMetrics()
-        header_space = self.pin_button.sizeHint().width() + (30 if self.pending else 0) + 12
+        header_space = (30 if self.pending else 0) + 12
         self.answer_caption.setText(fm.elidedText(self.model_caption, Qt.TextElideMode.ElideRight, max(1, self.answer_bounds.width() - 2 * theme.CONTENT_PADDING - header_space)))
         bar.setValue(bar.maximum() if at_bottom else old_value)
 
     def pin_answer(self):
         if self.is_pinned:
-            self.close()
             return True
-        if self._closed or not (self.pending or (self.sent and self.answer.strip())):
+        if self._closed or self.bounds.isEmpty():
             return False
         # The same widgets, request and coordinates survive. The native window
         # region removes every desktop-covering pixel outside the visible UI.
         self.is_pinned = True
-        self.pin_button.setText("Close")
-        self.waiting_pin_button.setText("Close")
-        for button in (self.pin_button, self.waiting_pin_button):
-            button.setToolTip("Close pinned capture / 关闭固定截图")
+        self._place_pin_icon()
         self.answer_caption.setCursor(Qt.CursorShape.SizeAllCursor)
         self._update_pin_mask()
         self.pin_requested.emit(self)
@@ -488,12 +492,12 @@ class ScreenshotOverlay(QWidget):
             return
         region = QRegion(self.bounds.adjusted(-theme.SELECTION_WIDTH, -theme.SELECTION_WIDTH,
                                                theme.SELECTION_WIDTH, theme.SELECTION_WIDTH))
+        region |= QRegion(self.pin_button.geometry())
         region |= QRegion(self.question_bounds)
         if self.answer_visible:
             region |= QRegion(self.answer_bounds)
         elif self.waiting_visible:
-            region |= QRegion(QRect(self.question_bounds.left(), self.question_bounds.bottom() + 8,
-                                    self.question_bounds.width(), 36))
+            region |= QRegion(self.waiting_bounds)
         self.setMask(region)
 
     def begin_editing(self):
@@ -547,6 +551,14 @@ class ScreenshotOverlay(QWidget):
         elif self.drag_start is not None:
             self.drag_selection(event.position().toPoint())
 
+    def mouseDoubleClickEvent(self, event):
+        if (self.is_pinned and event.button() == Qt.MouseButton.LeftButton
+                and self.bounds.contains(event.position().toPoint())):
+            self.close()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
     def mouseReleaseEvent(self, event):
         if self.is_pinned:
             self._pin_drag_offset = None
@@ -571,8 +583,7 @@ class ScreenshotOverlay(QWidget):
             painter.drawPixmap(QRectF(self.rect()), self.snapshot, QRectF(self.snapshot.rect()))
             painter.fillRect(self.rect(), QColor(0, 0, 0, 166))
         elif self.waiting_visible:
-            painter.fillRect(QRect(self.question_bounds.left(), self.question_bounds.bottom() + 8,
-                                   self.question_bounds.width(), 36), QColor(theme.SURFACE))
+            painter.fillRect(self.waiting_bounds, QColor(theme.SURFACE))
         if not self.bounds.isEmpty():
             source = QRectF(self.bounds.x() * self.snapshot.devicePixelRatio(), self.bounds.y() * self.snapshot.devicePixelRatio(), self.bounds.width() * self.snapshot.devicePixelRatio(), self.bounds.height() * self.snapshot.devicePixelRatio())
             painter.drawPixmap(QRectF(self.bounds), self.snapshot, source)
@@ -581,7 +592,7 @@ class ScreenshotOverlay(QWidget):
         if self.pending:
             # Paint in parent only outside child bubbles; header spinner is painted via overlay above children.
             if self.waiting_visible:
-                ring = QRectF(self.question_bounds.left() + 12, self.question_bounds.bottom() + 20, 18, 18)
+                ring = QRectF(self.waiting_bounds.left() + 12, self.waiting_bounds.top() + 8, 18, 18)
                 painter.setRenderHint(QPainter.RenderHint.Antialiasing)
                 painter.setPen(QPen(QColor(theme.ACCENT), 2))
                 painter.drawArc(ring, self.spinner_angle * 16, 250 * 16)

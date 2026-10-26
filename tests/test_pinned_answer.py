@@ -44,6 +44,21 @@ class PinnedAnswerTests(unittest.TestCase):
         APP.processEvents()
         return overlay
 
+    def test_pin_is_icon_at_image_corner_before_question_and_doubleclick_cancels(self):
+        overlay = self.controller.overlay
+        self.assertTrue(overlay.pin_button.isVisible())
+        self.assertEqual(overlay.pin_button.text(), '')
+        self.assertFalse(overlay.pin_button.icon().isNull())
+        self.assertIs(overlay.pin_button.parentWidget(), overlay)
+        self.assertTrue(overlay.bounds.contains(overlay.pin_button.geometry()))
+        self.assertFalse(hasattr(overlay, 'waiting_pin_button'))
+        QTest.mouseClick(overlay.pin_button, Qt.MouseButton.LeftButton)
+        self.assertTrue(overlay.is_pinned)
+        self.assertIsNone(self.controller.overlay)
+        QTest.mouseDClick(overlay, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, overlay.bounds.center())
+        self.assertTrue(overlay._closed)
+        self.assertFalse(self.controller.pinned_answers)
+
     def test_pin_keeps_same_widgets_layout_and_releases_outside_region(self):
         overlay = self.complete(r"**Result** \(\frac{a}{b}\) [Source](https://example.com)")
         widgets = (overlay.question_widget, overlay.answer_widget)
@@ -115,7 +130,7 @@ class PinnedAnswerTests(unittest.TestCase):
         future = overlay.request
         overlay.pin_answer()
         new_overlay = self.start_overlay()
-        overlay.pin_answer()  # the Pin control becomes Close
+        QTest.mouseDClick(overlay, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, overlay.bounds.center())
         self.assertTrue(future.cancelled())
         self.assertIs(self.controller.overlay, new_overlay)
         self.assertFalse(self.controller.pinned_answers)
