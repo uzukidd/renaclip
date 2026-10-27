@@ -65,6 +65,34 @@ class ScreenshotTests(unittest.TestCase):
         self.assertGreater(browser.viewport().height(), 0)
         self.assertLessEqual(browser.document().idealWidth(), browser.viewport().width() + 1)
 
+    def test_bottom_selection_keeps_question_near_image_and_answer_opens_above(self):
+        self.overlay.begin_selection(20, 680)
+        self.overlay.finish_selection(240, 800)
+        APP.processEvents()
+        question = QRect(self.overlay.question_bounds)
+        self.assertEqual(question.top(), 680)
+        self.overlay.send_question('Explain')
+        self.assertLessEqual(self.overlay.waiting_bounds.bottom(), 859)
+        self.overlay.receive_delta(self.overlay.generation, 'A short answer')
+        self.assertEqual(self.overlay.question_bounds, question)
+        self.assertEqual(self.overlay.answer_direction, 'above')
+        self.assertLess(self.overlay.answer_bounds.bottom(), question.top())
+        self.overlay.receive_result(self.overlay.generation, 'A much longer answer. ' * 500)
+        self.assertEqual(self.overlay.question_bounds, question)
+        self.assertLess(self.overlay.answer_bounds.bottom(), question.top())
+        self.assertTrue(self.overlay._work_area.contains(self.overlay.answer_bounds))
+        self.assertFalse(self.overlay.answer_bounds.intersects(question))
+        self.assertLessEqual(self.overlay.answer_bounds.height(), 560)
+
+    def test_top_selection_answer_stays_below_without_moving_question(self):
+        self.select()
+        question = QRect(self.overlay.question_bounds)
+        self.overlay.send_question('Explain')
+        self.overlay.receive_result(self.overlay.generation, 'A long answer. ' * 300)
+        self.assertEqual(self.overlay.question_bounds, question)
+        self.assertEqual(self.overlay.answer_direction, 'below')
+        self.assertGreater(self.overlay.answer_bounds.top(), question.bottom())
+
     def test_progressive_markdown_and_caption(self):
         self.select()
         self.overlay.send_question("What?")

@@ -135,11 +135,11 @@ Enable **Screenshot Q&A** in **Settings** and save. Press the configured hotkey 
 
 <a id="screenshot-pin"></a>
 
-**Pin the capture UI** ([中文说明](#screenshot-pin-zh)): Click **Pin** while waiting, during generation, or after completion. The original screenshot selection, question editor, and answer bubble stay in place with the same layout and controls. Only the desktop shading disappears; clicks outside these visible regions go directly to your desktop and other applications. Output continues in the original answer browser. Drag the screenshot, answer caption, or bubble padding to move the entire group. Text selection, links, scrolling, and editing/resubmitting a completed question remain available. The **Pin** button becomes **Close**; click it or press **Esc** while this UI has focus to close the group and cancel any unfinished request. You can start another capture while existing groups stay pinned. Pins last only for this application session.
+**Pin the capture UI** ([中文说明](#screenshot-pin-zh)): Click the **push-pin icon in the screenshot's upper-right corner** after selection, while waiting, during generation, or after completion. The original screenshot selection, question editor, and answer bubble remain available. Only the desktop shading disappears; clicks outside these visible regions go directly to other applications. Output continues in the original browser. Drag the screenshot, answer caption, or bubble padding to move the entire group. Double-click the pinned **image** (or press **Esc** while focused) to close it and cancel unfinished generation. There are no text Pin/Close buttons. Another capture can be opened while existing groups remain pinned; pins last only for the current session. The question stays beside the selected image without reserving future answer height. Answers grow below when possible, above when space below is insufficient, or use a side fallback on constrained screens; overflow scrolls instead of moving the question.
 
 <a id="screenshot-pin-zh"></a>
 
-**固定原截屏界面**（[English](#screenshot-pin)）：等待首个输出、生成过程中或回答完成后都可点击 **Pin**。原截图选区、问题输入框和回答气泡保留在原处，布局和控件保持一致；只移除桌面黑色遮罩，界面可见区域以外的点击会直接交给桌面和其他应用。回答继续在原回答框中更新。拖动截图、回答标题或气泡留白处，可将整组界面一起移动；文字选择、链接、滚动和完成后编辑问题重新发送等操作仍然可用。**Pin** 会变成 **Close**，点击它或在此界面获得焦点时按 **Esc** 可关闭整组界面，并取消未完成的请求。固定后可以再次启动截屏，已有的固定界面会保留。固定结果仅在本次应用运行期间保留。
+**固定原截屏界面**（[English](#screenshot-pin)）：框选后点击**图片右上角的大头针图标**即可固定，等待、生成和完成状态均可使用。原截图、问题输入框和回答气泡继续保留，仅移除桌面遮罩；可见区域以外的点击直接交给其他应用。拖动截图、回答标题或气泡留白处可移动整组界面。**双击已固定的图片**，或在界面获得焦点时按 **Esc**，可关闭并取消未完成生成；不再显示 Pin/Close 文字按钮。固定后可以再次启动截图，固定结果仅在当前应用会话内保留。问题框只按自身高度靠近选区定位，不再为长回答预留空间；回答下方放不下时向上展开，特殊狭小屏幕可回退到侧边，超长内容使用滚动而不移动问题框。
 
 ![image-20260906120554904](README.assets/image-20260906120554904.png)
 
