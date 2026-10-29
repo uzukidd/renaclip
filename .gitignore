@@ -1,6 +1,8 @@
 # Custom
 .renaclip_ui.lock
 gem_config.json
+desktop_chat_history.json
+.desktop_chat_history.json.*.tmp
 pystray_demo.py
 test_gemini_demo.py
 .chrome_user_data

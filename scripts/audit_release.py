@@ -12,7 +12,7 @@ def audit(folder):
         if not path.is_file():
             continue
         name = path.name.lower()
-        if ('gem_config' in name or 'renaclip.log' == name or name in ('tcl86t.dll', 'tk86t.dll')
+        if ('gem_config' in name or 'desktop_chat_history' in name or 'renaclip.log' == name or name in ('tcl86t.dll', 'tk86t.dll')
                 or 'webengine' in name or any(part.lower() in ('flet', '.chrome_user_data', '.edge_user_data', '.temp')
                                              for part in path.relative_to(folder).parts)):
             forbidden.append(str(path.relative_to(folder)))

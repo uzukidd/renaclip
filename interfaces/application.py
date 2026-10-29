@@ -10,7 +10,7 @@ from PySide6.QtGui import QIcon, QAction, QCursor
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QMessageBox
 
 import backend
-from config_loader import load_config, get_active_openai_provider
+from config_loader import load_config, get_active_openai_provider, normalize_openai_providers
 from constants import CONFIG_PATH, DATA_DIR, TRAY_ICON_PATH
 from interfaces.material_window import MainWindow
 from interfaces.qt_async import AsyncExecutor
@@ -21,6 +21,7 @@ from interfaces.theme import apply_qt_theme
 class Runtime(QObject):
     skill_requested = Signal(int)
     screenshot_requested = Signal()
+    chat_requested = Signal()
     notification = Signal(str, str)
 
     def __init__(self, app, *, hooks=True, show=True):
@@ -29,6 +30,7 @@ class Runtime(QObject):
         self.executor = AsyncExecutor(self)
         self.window = MainWindow(executor=self.executor)
         self.screenshot = ScreenshotQAController(self.executor, self)
+        self.chat_window = None
         self.handles = []
         self.skill_popups = set()
         self._popup_requests = {}
@@ -36,6 +38,7 @@ class Runtime(QObject):
         self.closed = False
         self.skill_requested.connect(self.run_skill)
         self.screenshot_requested.connect(self.run_screenshot)
+        self.chat_requested.connect(self.run_chat)
         self.notification.connect(self.notify)
         backend._notification_handler = self.notification.emit
         self.tray = QSystemTrayIcon(QIcon(str(TRAY_ICON_PATH)), self)
@@ -43,6 +46,7 @@ class Runtime(QObject):
         menu = QMenu()
         menu.addAction("Open RenaClip", self.show_window)
         menu.addAction("Screenshot Q&A", self.run_screenshot)
+        menu.addAction("Continuous chat", self.run_chat)
         menu.addSeparator()
         menu.addAction("Exit", app.quit)
         self.tray.setContextMenu(menu)
@@ -98,6 +102,7 @@ class Runtime(QObject):
                 self.handles = backend.register_app_hotkeys(
                     keyboard, self.state.hotkey_modifier, self.skill_requested.emit,
                     self.screenshot_requested.emit if self.state.screenshot_qa_enabled else None,
+                    self.chat_requested.emit,
                 )
             except Exception:
                 logging.exception("Global hotkey registration failed")
@@ -117,6 +122,21 @@ class Runtime(QObject):
         except Exception:
             logging.exception("Screenshot window failed")
             self.notify("RenaClip", "Could not capture this desktop. Try again.")
+
+    def run_chat(self):
+        if self.closed:
+            return
+        from interfaces.conversation_window import ConversationWindow
+        _, settings = load_config()
+        if self.chat_window is None:
+            self.chat_window = ConversationWindow(self.executor, DATA_DIR / 'desktop_chat_history.json')
+            screen = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
+            if screen:
+                area = screen.availableGeometry()
+                self.chat_window.resize(min(520, area.width()), min(660, area.height()))
+                self.chat_window.move(area.center() - self.chat_window.rect().center())
+        self.chat_window.configure(normalize_openai_providers(settings), self.state.openai_reasoning_effort)
+        self.chat_window.show_chat()
 
     def run_skill(self, index):
         if self.closed or index < 0 or index >= len(self.state.specs):
@@ -249,6 +269,8 @@ class Runtime(QObject):
         self.closed = True
         self.timer.stop()
         self.screenshot.close()
+        if self.chat_window is not None:
+            self.chat_window.shutdown()
         for popup in list(self.skill_popups):
             popup.close()
         if self.handles:

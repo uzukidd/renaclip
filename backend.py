@@ -220,7 +220,7 @@ async def process_clipboard_openai(app: RenaClipApp, chat_index: int, text: str)
             pass
 
 
-def register_app_hotkeys(keyboard_module, modifier, gem_callback, screenshot_callback=None):
+def register_app_hotkeys(keyboard_module, modifier, gem_callback, screenshot_callback=None, chat_callback=None):
     """Return only this app's hook handles, including optional screenshot Q&A."""
     handles = []
     try:
@@ -232,6 +232,10 @@ def register_app_hotkeys(keyboard_module, modifier, gem_callback, screenshot_cal
             # Non-suppressing keyboard hooks lose the full chord on key release.
             handles.append(keyboard_module.add_hotkey(
                 f"{modifier}+0", screenshot_callback, trigger_on_release=False,
+            ))
+        if chat_callback is not None:
+            handles.append(keyboard_module.add_hotkey(
+                f"{modifier}+-", chat_callback, trigger_on_release=False,
             ))
     except Exception:
         for handle in handles:

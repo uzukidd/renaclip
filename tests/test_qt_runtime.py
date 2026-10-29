@@ -33,6 +33,30 @@ class QtRuntimeTests(unittest.TestCase):
         executor.close()
         self.assertFalse(executor.thread.is_alive())
 
+    def test_runtime_chat_reuses_window_after_close(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'config.json'
+            with patch.object(config_loader, 'CONFIG_PATH', path), \
+                    patch('interfaces.application.CONFIG_PATH', path), \
+                    patch('interfaces.application.DATA_DIR', Path(folder)):
+                config_loader.save_config([], {'OPENAI_PROVIDERS': [
+                    {'name': 'Responses', 'api_interface': 'responses', 'model': 'vision'}]})
+                runtime = Runtime(self.app, hooks=False, show=False)
+                try:
+                    runtime.run_chat()
+                    first = runtime.chat_window
+                    self.assertTrue(first.isVisible())
+                    first.input.setPlainText('draft')
+                    first.close()
+                    runtime.run_chat()
+                    self.assertIs(runtime.chat_window, first)
+                    self.assertEqual(first.input.toPlainText(), 'draft')
+                finally:
+                    runtime.close()
+                    runtime.window.hide_on_close = False
+                    runtime.window.close()
+                self.assertTrue(first.disposed)
+
     def test_runtime_config_and_screenshot_reopen(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "config.json"
