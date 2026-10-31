@@ -17,6 +17,7 @@ DEFAULT_SETTINGS = {
     "BACKEND": "openai",
     "HOTKEY_MODIFIER": "ctrl",
     "START_WITH_WINDOWS": False,
+    "CONTINUOUS_CHAT_ENABLED": True,
     "SCREENSHOT_QA_ENABLED": False,
     "SCREENSHOT_QA_WEB_SEARCH": False,
     "OPENAI_API_KEY": "",

@@ -155,7 +155,8 @@ def _final_text(response: Any) -> str:
 
 async def request_chat(provider: dict, text: str, images: list[dict],
                        previous_response_id: str | None,
-                       on_delta: Callable | None = None) -> dict:
+                       on_delta: Callable | None = None, *, history: list[dict] | None = None,
+                       replay_input: list[dict] | None = None, use_history: bool = False) -> dict:
     """Request one turn; return ``{'text': str, 'response_id': str}`` on success.
 
     Always uses Responses with stream/store enabled and only the current user
@@ -186,14 +187,49 @@ async def request_chat(provider: dict, text: str, images: list[dict],
         "stream": True, "store": True,
     }
     request.update(reasoning_request_options("responses", provider.get("reasoning_effort")))
+    if provider.get('web_search', False):
+        request['tools'] = [{'type': 'web_search'}]
     if previous_response_id is not None:
         request["previous_response_id"] = previous_response_id
+    if history is not None:
+        request['include'] = ['reasoning.encrypted_content']
+    current_input = deepcopy(request['input'])
+    prior_input = deepcopy(replay_input) if replay_input else []
+    if not prior_input and history:
+        for message in history:
+            if message.get('role') == 'user':
+                blocks = [{'type': 'input_text', 'text': message.get('text', '')}]
+                blocks.extend({'type': 'input_image', 'image_url': image['data_url']} for image in message.get('images', []))
+                prior_input.append({'role': 'user', 'content': blocks})
+            elif message.get('role') == 'assistant':
+                prior_input.append({'role': 'assistant', 'content': [{'type': 'output_text', 'text': message.get('text', '')}]})
+    history_mode = use_history
+    if use_history:
+        request['input'] = prior_input + current_input
+        request.pop('previous_response_id', None)
     client = get_openai_client(api_key=provider.get("api_key"), base_url=provider.get("base_url"))
     if client is None:
         raise RuntimeError("OpenAI client could not be initialized")
     stream = None
     try:
-        stream = await client.responses.create(**request)
+        try:
+            stream = await client.responses.create(**request)
+        except Exception as error:
+            body = getattr(error, 'body', None)
+            detail = json.dumps(body, ensure_ascii=False) if body is not None else str(error)
+            detail = detail.lower()
+            # Retry only this explicit, pre-stream transport limitation. Other
+            # errors and partial generations must never trigger duplicate turns.
+            if (getattr(error, 'status_code', None) == 400 and previous_response_id
+                    and not use_history and history is not None
+                    and 'previous_response_id' in detail and 'websocket' in detail
+                    and ('only supported' in detail or 'only available' in detail)):
+                request.pop('previous_response_id', None)
+                request['input'] = prior_input + current_input
+                history_mode = True
+                stream = await client.responses.create(**request)
+            else:
+                raise
         final = None
         deltas = []
         async for event in stream:
@@ -222,7 +258,15 @@ async def request_chat(provider: dict, text: str, images: list[dict],
             answer = "".join(deltas)
         if not answer.strip():
             raise RuntimeError("The model returned an empty answer")
-        return {"text": answer, "response_id": response_id}
+        result = {"text": answer, "response_id": response_id}
+        if history is not None:
+            output = [deepcopy(item) if isinstance(item, dict) else item.model_dump(mode='json', exclude_none=True)
+                      for item in _get(final, 'output', []) or []]
+            if not output:
+                output = [{'role': 'assistant', 'content': [{'type': 'output_text', 'text': answer}]}]
+            result['replay_input'] = prior_input + current_input + output
+            result['use_history'] = history_mode
+        return result
     finally:
         try:
             await _close(stream)

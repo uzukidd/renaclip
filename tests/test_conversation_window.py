@@ -92,6 +92,31 @@ class ChatWindowTests(unittest.TestCase):
         self.assertEqual(self.window.input.toPlainText(), 'second')
         self.assertTrue(self.executor.calls[-1][0].cancelled())
 
+    def test_api_400_does_not_misdiagnose_web_search_as_expired_response(self):
+        self.window.state['previous_response_id'] = 'resp_previous'
+        self.window.state['provider_identity'] = self.window.state['selected_provider']
+        callbacks = self.send('question')
+        error = RuntimeError('secret')
+        error.status_code = 400
+        error.body = {'error': {'param': 'tools', 'message': 'web_search is not supported by this model'}}
+        callbacks['on_error'](error)
+        self.assertIn('Web search was rejected', self.window.status_label.text())
+        self.assertNotIn('expired', self.window.status_label.text())
+        self.assertEqual(self.window.state['previous_response_id'], 'resp_previous')
+        self.assertEqual(self.window.input.toPlainText(), 'question')
+
+    def test_expired_response_error_keeps_history_and_shows_api_detail(self):
+        self.window.state['previous_response_id'] = 'resp_previous'
+        self.window.state['provider_identity'] = self.window.state['selected_provider']
+        callbacks = self.send('question')
+        error = RuntimeError('secret')
+        error.status_code = 404
+        error.body = {'param': 'previous_response_id', 'message': 'Previous response not found'}
+        callbacks['on_error'](error)
+        self.assertIn('unavailable or expired', self.window.status_label.text())
+        self.assertIn('Previous response not found', self.window.status_label.text())
+        self.assertEqual(self.window.state['previous_response_id'], 'resp_previous')
+
     def test_scroll_history_drag_and_double_click_hide(self):
         self.window.state['messages'] = [{'role': 'assistant', 'text': 'line\n\n' * 30} for _ in range(8)]
         self.window._rebuild_history()
@@ -145,18 +170,83 @@ class ChatWindowTests(unittest.TestCase):
         self.assertEqual(len(restored.attachments), 1)
         self.assertEqual(restored.state['messages'], [])
 
-    def test_minus_hotkey_registration_and_cleanup_on_failure(self):
+    def test_chat_completions_provider_still_exposes_selectable_models(self):
+        self.window.configure([{**PROVIDER, 'api_interface': 'chat_completions'}])
+        self.assertEqual(self.window.provider_combo.count(), 1)
+        self.assertEqual(self.window.model_combo.count(), 2)
+        self.window.model_combo.setCurrentIndex(1)
+        self.assertEqual(self.window.model_combo.currentText(), 'other')
+        self.assertFalse(self.window.model_combo.isEditable())
+        self.assertIsNone(self.window.model_combo.lineEdit())
+        self.assertTrue(self.window.clear_button.text() == '')
+        self.assertFalse(self.window.clear_button.icon().isNull())
+        self.assertEqual(self.window.clear_button.toolTip(), '开启新对话')
+        self.assertFalse(hasattr(self.window, 'close_button'))
+        self.assertEqual(self.window.status_label.text(), '')
+
+    def test_refresh_models_preserves_selection_and_ignores_stale_results(self):
+        self.window.refresh_models()
+        callback = self.executor.calls[-1][1]['on_result']
+        callback(['new-model', 'vision'])
+        self.assertNotEqual(self.window.model_combo.findText('new-model'), -1)
+        self.assertEqual(self.window.model_combo.currentText(), 'vision')
+        self.assertTrue(self.window.refresh_models_button.isEnabled())
+        self.window.refresh_models()
+        stale = self.executor.calls[-1][1]['on_result']
+        self.window.configure([{**PROVIDER, 'name': 'changed'}])
+        stale(['wrong-provider-model'])
+        self.assertEqual(self.window.model_combo.findText('wrong-provider-model'), -1)
+
+    def test_web_search_preference_persists_and_survives_new_conversation(self):
+        self.assertFalse(self.window.web_search_checkbox.isChecked())
+        self.window.web_search_checkbox.setChecked(True)
+        self.assertTrue(self.window.store.load()['web_search'])
+        self.window.clear_history()
+        self.assertTrue(self.window.state['web_search'])
+        self.send('search question')
+        self.assertFalse(self.window.web_search_checkbox.isEnabled())
+        self.window.stop_request()
+        self.assertTrue(self.window.web_search_checkbox.isEnabled())
+        restored = ConversationWindow(self.executor, self.window.store.path)
+        self.addCleanup(restored.shutdown)
+        self.assertTrue(restored.web_search_checkbox.isChecked())
+
+    def test_drag_edges_and_corners_resize_window(self):
+        for edge, movement, expected in (
+                ('right', QPoint(50, 0), (50, 0)),
+                ('left', QPoint(-30, 0), (30, 0)),
+                ('top', QPoint(0, -25), (0, 25)),
+                ('bottom', QPoint(0, 35), (0, 35)),
+                ('corner', QPoint(40, 30), (40, 30))):
+            local = {'right': QPoint(self.window.width() - 2, 100), 'left': QPoint(2, 100),
+                     'top': QPoint(100, 2), 'bottom': QPoint(100, self.window.height() - 2),
+                     'corner': QPoint(self.window.width() - 2, self.window.height() - 2)}[edge]
+            original = self.window.size()
+            global_point = self.window.mapToGlobal(local)
+            APP.sendEvent(self.window, QMouseEvent(QEvent.Type.MouseButtonPress, local, global_point,
+                Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+            APP.sendEvent(self.window, QMouseEvent(QEvent.Type.MouseMove, local + movement, global_point + movement,
+                Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+            APP.sendEvent(self.window, QMouseEvent(QEvent.Type.MouseButtonRelease, local + movement, global_point + movement,
+                Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
+            self.assertEqual(self.window.width() - original.width(), expected[0])
+            self.assertEqual(self.window.height() - original.height(), expected[1])
+            self.assertIsNone(self.window._resize_origin)
+
+    def test_nine_hotkey_registration_and_cleanup_on_failure(self):
         keyboard = Mock()
         keyboard.add_hotkey.side_effect = lambda chord, callback, **kw: chord
         callback = Mock()
         handles = backend.register_app_hotkeys(keyboard, 'ctrl+shift', Mock(), None, callback)
-        self.assertIn('ctrl+shift+-', handles)
+        self.assertIn('ctrl+shift+9', handles)
+        self.assertEqual(len(handles), 9)
+        self.assertNotIn('ctrl+shift+-', handles)
         entry = keyboard.add_hotkey.call_args_list[-1]
         self.assertIs(entry.args[1], callback)
-        keyboard.add_hotkey.side_effect = [str(i) for i in range(9)] + [RuntimeError('denied')]
+        keyboard.add_hotkey.side_effect = [str(i) for i in range(8)] + [RuntimeError('denied')]
         with self.assertRaises(RuntimeError):
             backend.register_app_hotkeys(keyboard, 'ctrl', Mock(), None, callback)
-        self.assertEqual(keyboard.remove_hotkey.call_count, 9)
+        self.assertEqual(keyboard.remove_hotkey.call_count, 8)
 
 
 if __name__ == '__main__':

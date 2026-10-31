@@ -46,7 +46,7 @@ class Runtime(QObject):
         menu = QMenu()
         menu.addAction("Open RenaClip", self.show_window)
         menu.addAction("Screenshot Q&A", self.run_screenshot)
-        menu.addAction("Continuous chat", self.run_chat)
+        self.chat_action = menu.addAction("RenaChat", self.run_chat)
         menu.addSeparator()
         menu.addAction("Exit", app.quit)
         self.tray.setContextMenu(menu)
@@ -92,7 +92,11 @@ class Runtime(QObject):
         self.state = backend.RenaClipApp.load_config(CONFIG_PATH)
         self.state.openai_chats = [dict(spec) for spec in self.state.specs]
         self.mtime = CONFIG_PATH.stat().st_mtime_ns if CONFIG_PATH.exists() else None
-        signature = (self.state.hotkey_modifier, self.state.screenshot_qa_enabled)
+        self.chat_action.setEnabled(self.state.continuous_chat_enabled)
+        if not self.state.continuous_chat_enabled and self.chat_window is not None:
+            self.chat_window.hide()
+        signature = (self.state.hotkey_modifier, self.state.screenshot_qa_enabled,
+                     self.state.continuous_chat_enabled)
         if signature != self.signature and self.hooks_enabled:
             import keyboard
             for handle in self.handles:
@@ -102,7 +106,7 @@ class Runtime(QObject):
                 self.handles = backend.register_app_hotkeys(
                     keyboard, self.state.hotkey_modifier, self.skill_requested.emit,
                     self.screenshot_requested.emit if self.state.screenshot_qa_enabled else None,
-                    self.chat_requested.emit,
+                    self.chat_requested.emit if self.state.continuous_chat_enabled else None,
                 )
             except Exception:
                 logging.exception("Global hotkey registration failed")
@@ -124,7 +128,7 @@ class Runtime(QObject):
             self.notify("RenaClip", "Could not capture this desktop. Try again.")
 
     def run_chat(self):
-        if self.closed:
+        if self.closed or not self.state.continuous_chat_enabled:
             return
         from interfaces.conversation_window import ConversationWindow
         _, settings = load_config()
@@ -139,7 +143,7 @@ class Runtime(QObject):
         self.chat_window.show_chat()
 
     def run_skill(self, index):
-        if self.closed or index < 0 or index >= len(self.state.specs):
+        if self.closed or not 0 <= index < min(8, len(self.state.specs)):
             return
         # Clipboard access stays on the Qt UI thread, including under async callbacks.
         text = self.app.clipboard().text()

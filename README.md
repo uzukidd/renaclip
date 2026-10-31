@@ -112,8 +112,6 @@ Set the skill **name**, **description**, and **prompt** (system instruction). En
 
 Enable **Popup mode** in a Skill editor to stream its response into a topmost window beside the mouse cursor instead of updating the clipboard. The window opens immediately with a spinner and **Thinking...**, then switches to the streamed answer when text arrives; drag its title bar to move it, select text and press **Ctrl+C** or click **Copy**, and double-click the popup to close it. Closing also cancels unfinished generation. Popup mode requests streaming even when provider streaming is disabled. Each Skill stores this option locally as `popup_mode` (default `false`).
 
-**弹窗模式：** 在 Skill 编辑窗口勾选 **Popup mode** 并保存。触发后立即在鼠标光标旁显示置顶弹窗，以转圈和 **Thinking...** 等待，收到文字后切换为流式回答，不自动修改剪贴板；拖动标题栏可移动，选择文字后按 **Ctrl+C** 或点击 **Copy** 可复制，双击弹窗可关闭并取消未完成生成。弹窗模式会强制请求流式输出，该选项按 Skill 保存，默认关闭。
-
 ![Edit Gem](README.assets/edit.png)
 
 ### 3. Settings
@@ -135,29 +133,15 @@ Enable **Screenshot Q&A** in **Settings** and save. Press the configured hotkey 
 
 <a id="screenshot-pin"></a>
 
-**Pin the capture UI** ([中文说明](#screenshot-pin-zh)): Click the **push-pin icon in the screenshot's upper-right corner** after selection, while waiting, during generation, or after completion. The original screenshot selection, question editor, and answer bubble remain available. Only the desktop shading disappears; clicks outside these visible regions go directly to other applications. Output continues in the original browser. Drag the screenshot, answer caption, or bubble padding to move the entire group. Double-click the pinned **image** (or press **Esc** while focused) to close it and cancel unfinished generation. There are no text Pin/Close buttons. Another capture can be opened while existing groups remain pinned; pins last only for the current session. The question stays beside the selected image without reserving future answer height. Answers grow below when possible, above when space below is insufficient, or use a side fallback on constrained screens; overflow scrolls instead of moving the question.
-
-<a id="screenshot-pin-zh"></a>
-
-**固定原截屏界面**（[English](#screenshot-pin)）：框选后点击**图片右上角的大头针图标**即可固定，等待、生成和完成状态均可使用。原截图、问题输入框和回答气泡继续保留，仅移除桌面遮罩；可见区域以外的点击直接交给其他应用。拖动截图、回答标题或气泡留白处可移动整组界面。**双击已固定的图片**，或在界面获得焦点时按 **Esc**，可关闭并取消未完成生成；不再显示 Pin/Close 文字按钮。固定后可以再次启动截图，固定结果仅在当前应用会话内保留。问题框只按自身高度靠近选区定位，不再为长回答预留空间；回答下方放不下时向上展开，特殊狭小屏幕可回退到侧边，超长内容使用滚动而不移动问题框。
+Click the **push-pin icon in the screenshot's upper-right corner** after selection, while waiting, during generation, or after completion. The original screenshot selection, question editor, and answer bubble remain available. Only the desktop shading disappears; clicks outside these visible regions go directly to other applications. Output continues in the original browser. Drag the screenshot, answer caption, or bubble padding to move the entire group. Double-click the pinned **image** (or press **Esc** while focused) to close it and cancel unfinished generation. There are no text Pin/Close buttons. Another capture can be opened while existing groups remain pinned; pins last only for the current session. The question stays beside the selected image without reserving future answer height. Answers grow below when possible, above when space below is insufficient, or use a side fallback on constrained screens; overflow scrolls instead of moving the question.
 
 ![image-20260906120554904](README.assets/image-20260906120554904.png)
 
 ---
 
-### 5. Continuous floating chat
+### 5. RenaChat
 
-<a id="continuous-chat"></a>
-
-[中文说明](#continuous-chat-zh). Press the configured modifier plus **`-`** (for example **Ctrl+-** or **Ctrl+Shift+-**), or choose **Continuous chat** from the tray. The draggable, resizable window stays on top. Choose a Responses provider, model, and reasoning effort (`default`, `low`, `medium`, `high`). Type a message and press **Enter** to send; **Shift+Enter** inserts a new line. **Add images** attaches local pictures; **Remove images** clears pending attachments. Scroll the mouse wheel over the conversation to browse earlier turns. Double-click the header/background, or click **×**, to hide the window; reopening continues the same history, and generation continues while hidden. **Stop** cancels the current request and restores its draft. **Clear** cancels any current request and resets local history, attachments, and the response chain.
-
-The chat uses the Responses API with `store=true`: each completed `response_id` becomes the next request's `previous_response_id`. Only successfully completed turns are committed. A provider must support stored Responses and image input for image conversations. Switching providers requires clearing the chain first; changing model/effort applies to the next turn. History, uploaded images, and the latest response ID are saved locally in `desktop_chat_history.json` beside the active configuration and survive application restarts. Provider-side response retention still determines how long an ID can be continued; if it expires, clear to start again. Clearing local history starts a fresh chain and does not delete previously stored server responses. Credentials are not written to the chat history or bundled in releases.
-
-<a id="continuous-chat-zh"></a>
-
-**连续悬浮对话**（[English](#continuous-chat)）：按当前修饰键加 **`-`**（例如 **Ctrl+-** 或 **Ctrl+Shift+-**），或在托盘选择 **Continuous chat**。窗口置顶，可拖动标题栏或背景移动，并可通过右下角调整大小。选择 Responses 服务商、模型和思考程度（`default`、`low`、`medium`、`high`），输入后按 **Enter** 发送，**Shift+Enter** 换行。**Add images** 上传本地图片，**Remove images** 移除待发送附件。鼠标放在对话区域滚动即可查看连续历史。双击标题栏或背景，或点击 **×**，只会隐藏窗口；重新打开可继续原对话，隐藏期间生成也会继续。**Stop** 取消当前请求并恢复草稿；**Clear** 取消请求并清空本地历史、附件和响应链。
-
-对话使用 Responses API 的 `store=true`，每轮完成后保存 `response_id`，下一轮通过 `previous_response_id` 续接，仅成功完成的轮次写入历史。服务商需要支持已存储 Responses；图片对话还需模型支持图片输入。切换服务商需先清空响应链，模型和思考程度的修改在下一轮生效。历史、上传图片和最新响应 ID 保存在当前配置目录中的 `desktop_chat_history.json`，重启应用后仍可读取。服务端响应保留期限决定 ID 能续接多久，过期后需清空重开。本地清空不会删除服务端此前保存的响应。聊天历史不保存 API 密钥，也不会随发布包分发。
+TBD
 
 ## Configuration
 

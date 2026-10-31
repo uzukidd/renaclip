@@ -195,6 +195,8 @@ class SettingsDialog(QDialog):
         form = QFormLayout()
         self.backend_combo = _combo(VALID_BACKENDS, self.draft.get("BACKEND", "openai"))
         self.hotkey_combo = _combo(VALID_MODIFIERS, self.draft.get("HOTKEY_MODIFIER", "ctrl"))
+        self.continuous_chat_checkbox = QCheckBox("RenaChat (Hotkey + 9)")
+        self.continuous_chat_checkbox.setChecked(self.draft.get("CONTINUOUS_CHAT_ENABLED", True) is True)
         self.screenshot_checkbox = QCheckBox("Screenshot Q&A (Hotkey + 0)")
         self.screenshot_checkbox.setChecked(bool(self.draft.get("SCREENSHOT_QA_ENABLED")))
         self.screenshot_web_search_checkbox = QCheckBox("Screenshot web search")
@@ -203,6 +205,7 @@ class SettingsDialog(QDialog):
         self.screenshot_checkbox.toggled.connect(self.screenshot_web_search_checkbox.setEnabled)
         form.addRow("Backend", self.backend_combo)
         form.addRow("Hotkey modifier", self.hotkey_combo)
+        form.addRow(self.continuous_chat_checkbox)
         form.addRow(self.screenshot_checkbox)
         form.addRow(self.screenshot_web_search_checkbox)
         body.addLayout(form)
@@ -305,6 +308,7 @@ class SettingsDialog(QDialog):
     def value(self):
         self.draft.update({
             "BACKEND": self.backend_combo.currentText(), "HOTKEY_MODIFIER": self.hotkey_combo.currentText(),
+            "CONTINUOUS_CHAT_ENABLED": self.continuous_chat_checkbox.isChecked(),
             "SCREENSHOT_QA_ENABLED": self.screenshot_checkbox.isChecked(),
             "SCREENSHOT_QA_WEB_SEARCH": self.screenshot_web_search_checkbox.isChecked(),
             "GEMINI_PSID": self.psid_field.text().strip(), "GEMINI_PSIDTS": self.psidts_field.text().strip(),
@@ -412,6 +416,7 @@ class MainWindow(QMainWindow):
         self._persist()
 
     def _rebuild_skills(self):
+        self.add_skill_button.setEnabled(len(self.gems) < 8)
         self.skill_list.clear()
         modifier = self.settings.get("HOTKEY_MODIFIER", "ctrl").title()
         for index, skill in enumerate(self.gems):
@@ -421,7 +426,8 @@ class MainWindow(QMainWindow):
             card = QWidget()
             row = QHBoxLayout(card)
             text = QVBoxLayout()
-            title = QLabel(f"{skill.get('name', 'Unnamed')}  ·  {modifier}+{index + 1}" + ("  ·  Web search" if skill.get("web_search") else ""))
+            shortcut = f"  ·  {modifier}+{index + 1}" if index < 8 else ""
+            title = QLabel(f"{skill.get('name', 'Unnamed')}{shortcut}" + ("  ·  Web search" if skill.get("web_search") else ""))
             font = title.font()
             font.setBold(True)
             title.setFont(font)
@@ -453,6 +459,8 @@ class MainWindow(QMainWindow):
             self._rebuild_skills()
 
     def edit_skill(self, index=None):
+        if index is None and len(self.gems) >= 8:
+            return
         dialog = SkillDialog(self.gems[index] if index is not None else None, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             if index is None:

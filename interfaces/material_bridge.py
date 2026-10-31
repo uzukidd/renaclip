@@ -96,6 +96,8 @@ class MaterialBridge(QObject):
         skills = deepcopy(self._skills)
         if index != -1 and not 0 <= index < len(skills):
             return self._fail('This skill no longer exists. Reopen the editor.')
+        if index == -1 and len(skills) >= 8:
+            return self._fail("Keep at most eight skills. Edit or remove an existing skill first.")
         entry = dict(skills[index]) if index >= 0 else {}
         entry.update(name=str(value['name']).strip(), description=str(value.get('description','')),
                      prompt=str(value.get('prompt','')), web_search=bool(value.get('web_search',False)),
@@ -133,7 +135,7 @@ class MaterialBridge(QObject):
     def updateSettingsDraft(self, value):
         if self._draft is None:
             return
-        allowed = ('START_WITH_WINDOWS','BACKEND','HOTKEY_MODIFIER','SCREENSHOT_QA_ENABLED','SCREENSHOT_QA_WEB_SEARCH',
+        allowed = ('START_WITH_WINDOWS','BACKEND','HOTKEY_MODIFIER','CONTINUOUS_CHAT_ENABLED','SCREENSHOT_QA_ENABLED','SCREENSHOT_QA_WEB_SEARCH',
                    'GEMINI_PSID','GEMINI_PSIDTS','GEMINI_PROXY','GEMINI_MODEL',
                    'GEMINI_COOKIE_BROWSER','GEMINI_USE_BROWSER_COOKIE')
         for key in allowed:
