@@ -1,4 +1,5 @@
 import os
+import base64
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from concurrent.futures import Future
 from pathlib import Path
@@ -6,10 +7,10 @@ import tempfile
 import unittest
 from unittest.mock import Mock
 from PySide6.QtCore import Qt, QEvent, QPoint
-from PySide6.QtGui import QImage, QMouseEvent
+from PySide6.QtGui import QImage, QMouseEvent, QEnterEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
-from interfaces.conversation_window import ConversationWindow
+from interfaces.conversation_window import ConversationWindow, ImageThumbnail
 import backend
 
 APP = QApplication.instance() or QApplication([])
@@ -79,6 +80,88 @@ class ChatWindowTests(unittest.TestCase):
         self.assertIsNone(self.window.state['previous_response_id'])
         self.assertEqual(self.window.store.load()['messages'], [])
         self.assertFalse(self.window.attachments)
+
+    def test_paste_clipboard_image_as_attachment_and_preserve_text_paste(self):
+        self.addCleanup(APP.clipboard().clear)
+        image = QImage(40, 20, QImage.Format.Format_RGB32)
+        image.fill(Qt.GlobalColor.green)
+        APP.clipboard().setImage(image)
+        self.window.input.setPlainText('Describe this: ')
+        QTest.keyClick(self.window.input, Qt.Key.Key_End)
+        QTest.keyClick(self.window.input, Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier)
+        self.assertEqual(len(self.window.attachments), 1)
+        self.assertEqual(self.window.input.toPlainText(), 'Describe this: ')
+        attachment = self.window.attachments[0]
+        self.assertEqual(attachment['name'], 'clipboard-1.png')
+        decoded = QImage.fromData(base64.b64decode(attachment['data_url'].split(',', 1)[1]))
+        self.assertEqual(decoded.size(), image.size())
+        self.assertEqual(decoded.pixelColor(0, 0), image.pixelColor(0, 0))
+        self.assertEqual(len(self.window.store.load()['draft_images']), 1)
+        APP.clipboard().setText('ordinary text')
+        self.window.input.paste()
+        self.assertEqual(self.window.input.toPlainText(), 'Describe this: ordinary text')
+        self.send('question')
+        self.assertEqual(self.window._turn['images'], [attachment])
+
+    def test_thumbnail_hover_remove_and_sent_images_above_bubble(self):
+        image = QImage(80, 60, QImage.Format.Format_RGB32)
+        image.fill(Qt.GlobalColor.red)
+        self.window.add_clipboard_image(image)
+        self.window.add_clipboard_image(image)
+        APP.processEvents()
+        thumbnails = [self.window.attachment_layout.itemAt(i).widget() for i in range(2)]
+        self.assertTrue(self.window.attachment_strip.isVisible())
+        self.assertFalse(self.window.attachment_label.isVisible())
+        self.assertFalse(thumbnails[0].remove_button.isVisible())
+        APP.sendEvent(thumbnails[0], QEnterEvent(QPoint(10, 10), QPoint(10, 10), QPoint(10, 10)))
+        self.assertTrue(thumbnails[0].remove_button.isVisible())
+        QTest.mouseClick(thumbnails[0].remove_button, Qt.MouseButton.LeftButton)
+        self.assertEqual(len(self.window.attachments), 1)
+        self.assertEqual(len(self.window.store.load()['draft_images']), 1)
+        callbacks = self.send('describe this')
+        browser = self.window._browsers[-2]
+        bubble = browser.parentWidget()
+        self.assertEqual(bubble.objectName(), 'userBubble')
+        turn = bubble.parentWidget()
+        sent = turn.findChildren(ImageThumbnail)
+        self.assertEqual(len(sent), 1)
+        self.assertIsNot(sent[0].parentWidget(), bubble)
+        self.assertFalse(sent[0].removable)
+        self.assertEqual(turn.layout().indexOf(bubble), 1)
+        self.assertFalse(self.window.attachment_strip.isVisible())
+
+    def test_model_name_fits_and_escape_hides_without_canceling(self):
+        name = 'gpt-6.1-super-long-model-name'
+        self.window.configure([{**PROVIDER, 'model': name, 'models': [name]}])
+        self.window.model_combo.setCurrentText(name)
+        APP.processEvents()
+        required = self.window.model_combo.fontMetrics().horizontalAdvance(name) + 48
+        self.assertGreaterEqual(self.window.model_combo.minimumWidth(), required)
+        self.assertEqual(self.window.model_combo.toolTip(), name)
+        self.send('question')
+        future = self.executor.calls[-1][0]
+        QTest.keyClick(self.window, Qt.Key.Key_Escape)
+        self.assertFalse(self.window.isVisible())
+        self.assertTrue(self.window.pending)
+        self.assertFalse(future.cancelled())
+        self.window.show_chat()
+        self.assertTrue(self.window.isVisible())
+
+    def test_empty_chat_title_centers_hides_on_send_and_returns_on_clear(self):
+        APP.processEvents()
+        label = self.window.empty_chat_label
+        self.assertEqual(label.text(), 'RenaChat')
+        self.assertTrue(label.isVisible())
+        self.assertEqual(label.geometry(), self.window.scroll.viewport().rect())
+        self.window.resize(740, 720)
+        APP.processEvents()
+        self.assertEqual(label.geometry(), self.window.scroll.viewport().rect())
+        callbacks = self.send('hello')
+        self.assertFalse(label.isVisible())
+        callbacks['on_result']({'text': 'answer', 'response_id': 'resp_1'})
+        self.assertFalse(label.isVisible())
+        self.window.clear_history()
+        self.assertTrue(label.isVisible())
 
     def test_failure_and_stop_restore_draft_without_committing(self):
         callbacks = self.send('draft')
@@ -180,7 +263,7 @@ class ChatWindowTests(unittest.TestCase):
         self.assertIsNone(self.window.model_combo.lineEdit())
         self.assertTrue(self.window.clear_button.text() == '')
         self.assertFalse(self.window.clear_button.icon().isNull())
-        self.assertEqual(self.window.clear_button.toolTip(), '开启新对话')
+        self.assertEqual(self.window.clear_button.toolTip(), 'New conversation')
         self.assertFalse(hasattr(self.window, 'close_button'))
         self.assertEqual(self.window.status_label.text(), '')
 

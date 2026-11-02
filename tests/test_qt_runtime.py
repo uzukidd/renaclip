@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 
 import backend
 
-from PySide6.QtCore import QThread
+from PySide6.QtCore import QThread, QPoint, QRect
 from PySide6.QtWidgets import QApplication
 
 from interfaces.qt_async import AsyncExecutor
@@ -58,6 +58,51 @@ class QtRuntimeTests(unittest.TestCase):
                     runtime.window.hide_on_close = False
                     runtime.window.close()
                 self.assertTrue(first.disposed)
+
+    def test_visible_chat_shortcut_only_moves_existing_window_to_cursor(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'config.json'
+            screen = Mock()
+            screen.availableGeometry.return_value = QRect(-1200, 0, 1200, 900)
+            with patch.object(config_loader, 'CONFIG_PATH', path), \
+                    patch('interfaces.application.CONFIG_PATH', path), \
+                    patch('interfaces.application.DATA_DIR', Path(folder)), \
+                    patch('interfaces.application.QApplication.screenAt', return_value=screen), \
+                    patch('interfaces.application.QCursor.pos', return_value=QPoint(-1000, 100)) as cursor:
+                config_loader.save_config([], {'OPENAI_PROVIDERS': [
+                    {'name': 'Responses', 'api_interface': 'responses', 'model': 'vision'}]})
+                runtime = Runtime(self.app, hooks=False, show=False)
+                try:
+                    runtime.run_chat()
+                    window = runtime.chat_window
+                    self.assertEqual(window.pos(), QPoint(-988, 112))
+                    window.input.setPlainText('keep draft')
+                    window.pending = True
+                    request = Mock()
+                    window.request = request
+                    size = window.size()
+                    with patch.object(window, 'configure') as configure, patch.object(window, 'show_chat') as show:
+                        cursor.return_value = QPoint(-20, 880)
+                        runtime.chat_requested.emit()
+                        configure.assert_not_called()
+                        show.assert_not_called()
+                    self.assertIs(runtime.chat_window, window)
+                    self.assertEqual(window.size(), size)
+                    self.assertEqual(window.pos(), QPoint(-size.width(), 900 - size.height()))
+                    self.assertEqual(window.input.toPlainText(), 'keep draft')
+                    self.assertTrue(window.pending)
+                    request.cancel.assert_not_called()
+                    window.pending = False
+                    window.request = None
+                    window.close()
+                    cursor.return_value = QPoint(-900, 30)
+                    runtime.run_chat()
+                    self.assertTrue(window.isVisible())
+                    self.assertEqual(window.pos(), QPoint(-888, 42))
+                finally:
+                    runtime.close()
+                    runtime.window.hide_on_close = False
+                    runtime.window.close()
 
     def test_hotkey_slots_callbacks_and_registration_cleanup(self):
         for screenshot_enabled in (False, True):

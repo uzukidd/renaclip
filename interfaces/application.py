@@ -131,16 +131,28 @@ class Runtime(QObject):
         if self.closed or not self.state.continuous_chat_enabled:
             return
         from interfaces.conversation_window import ConversationWindow
-        _, settings = load_config()
+        position = QCursor.pos()
+        screen = QApplication.screenAt(position) or QApplication.primaryScreen()
         if self.chat_window is None:
             self.chat_window = ConversationWindow(self.executor, DATA_DIR / 'desktop_chat_history.json')
-            screen = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
             if screen:
                 area = screen.availableGeometry()
                 self.chat_window.resize(min(520, area.width()), min(660, area.height()))
-                self.chat_window.move(area.center() - self.chat_window.rect().center())
-        self.chat_window.configure(normalize_openai_providers(settings), self.state.openai_reasoning_effort)
-        self.chat_window.show_chat()
+        was_visible = self.chat_window.isVisible()
+        if not was_visible:
+            _, settings = load_config()
+            self.chat_window.configure(normalize_openai_providers(settings), self.state.openai_reasoning_effort)
+        # Recall the same window next to the pointer, without resetting controls,
+        # selection, scroll position, size or any running request.
+        if screen:
+            area = screen.availableGeometry()
+            x = max(area.left(), min(position.x() + 12, area.right() - self.chat_window.width() + 1))
+            y = max(area.top(), min(position.y() + 12, area.bottom() - self.chat_window.height() + 1))
+            self.chat_window.move(x, y)
+        else:
+            self.chat_window.move(position)
+        if not was_visible:
+            self.chat_window.show_chat()
 
     def run_skill(self, index):
         if self.closed or not 0 <= index < min(8, len(self.state.specs)):

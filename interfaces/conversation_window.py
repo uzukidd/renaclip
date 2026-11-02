@@ -3,8 +3,8 @@ from copy import deepcopy
 from pathlib import Path
 import base64
 
-from PySide6.QtCore import Qt, QEvent, QTimer, QBuffer, QByteArray, QIODevice, QSize, QRectF, QPointF
-from PySide6.QtGui import QImage, QPixmap, QDesktopServices, QTextCursor, QTextBlockFormat, QFont, QIcon, QPainter, QPen, QColor
+from PySide6.QtCore import Qt, QEvent, QTimer, QBuffer, QByteArray, QIODevice, QSize, QRectF, QPointF, Signal
+from PySide6.QtGui import QImage, QPixmap, QDesktopServices, QTextCursor, QTextBlockFormat, QFont, QIcon, QPainter, QPen, QColor, QPainterPath
 from PySide6.QtWidgets import (QApplication, QWidget, QLabel, QPushButton, QComboBox,
                                QVBoxLayout, QHBoxLayout, QScrollArea, QFileDialog,
                                QSizeGrip, QLayout, QCheckBox)
@@ -14,6 +14,63 @@ from interfaces import theme
 from interfaces.screenshot_overlay import AnswerBrowser, QuestionEdit, safe_url
 from openai_client.desktop_chat import DesktopChatStore, provider_identity, request_chat
 from openai_client import fetch_available_models
+
+
+class ImageThumbnail(QWidget):
+    remove_requested = Signal()
+
+    def __init__(self, image, *, removable=False, size=96, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(size, size)
+        self.pixmap = QPixmap()
+        try:
+            self.pixmap.loadFromData(base64.b64decode(image['data_url'].split(',', 1)[1], validate=True))
+        except (ValueError, KeyError, TypeError, AttributeError):
+            pass
+        self.remove_button = QPushButton('×', self)
+        self.remove_button.setFixedSize(22, 22)
+        self.remove_button.move(size - 25, 3)
+        self.remove_button.setToolTip('Remove image / 移除图片')
+        self.remove_button.setStyleSheet(f'QPushButton {{background:#303030;color:{theme.ACCENT_LIGHT};border-radius:11px;padding:0;font-size:18px;}} QPushButton:hover {{background:{theme.ACCENT};color:white;}}')
+        self.remove_button.clicked.connect(self.remove_requested)
+        self.remove_button.hide()
+        self.removable = removable
+
+    def enterEvent(self, event):
+        self.remove_button.setVisible(self.removable)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.remove_button.hide()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        clip = QPainterPath()
+        clip.addRoundedRect(QRectF(self.rect()), 18, 18)
+        painter.setClipPath(clip)
+        painter.fillRect(self.rect(), QColor('#1c1c1c'))
+        if not self.pixmap.isNull():
+            scaled = self.pixmap.scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                        Qt.TransformationMode.SmoothTransformation)
+            painter.drawPixmap((self.width() - scaled.width()) // 2, (self.height() - scaled.height()) // 2, scaled)
+
+
+class ChatInput(QuestionEdit):
+    image_pasted = Signal(QImage)
+
+    def canInsertFromMimeData(self, source):
+        return source.hasImage() or super().canInsertFromMimeData(source)
+
+    def insertFromMimeData(self, source):
+        if source.hasImage():
+            data = source.imageData()
+            image = data.toImage() if isinstance(data, QPixmap) else QImage(data)
+            if not image.isNull():
+                self.image_pasted.emit(image)
+                return
+        super().insertFromMimeData(source)
 
 
 class ChatMessageBrowser(AnswerBrowser):
@@ -138,7 +195,7 @@ class ConversationWindow(QWidget):
         self.effort_combo.addItems(list(VALID_REASONING_EFFORTS))
         self.effort_combo.setToolTip('Reasoning effort')
         self.effort_combo.setCurrentText(self.state.get('reasoning_effort', 'default'))
-        self.model_combo.setMaximumWidth(220)
+        self.model_combo.setMaximumWidth(16777215)
         self.effort_combo.setMaximumWidth(95)
         self.effort_combo.setMinimumWidth(75)
         options.addWidget(self.model_combo, 1)
@@ -157,6 +214,12 @@ class ConversationWindow(QWidget):
         self.messages_layout.setSpacing(24)
         self.messages_layout.addStretch(1)
         self.scroll.setWidget(self.content)
+        self.empty_chat_label = QLabel('RenaChat', self.scroll.viewport())
+        self.empty_chat_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_chat_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.empty_chat_label.setStyleSheet(f'color:{theme.ACCENT_LIGHT};font-size:48px;font-weight:600;background:transparent;')
+        self.empty_chat_label.setGeometry(self.scroll.viewport().rect())
+        self.empty_chat_label.raise_()
         layout.addWidget(self.scroll, 1)
         self.status_label = QLabel('', self)
         self.status_label.setObjectName('statusLabel')
@@ -166,13 +229,25 @@ class ConversationWindow(QWidget):
         self.attachment_label = QLabel('', self)
         self.attachment_label.setTextFormat(Qt.TextFormat.PlainText)
         self.attachment_label.setWordWrap(True)
-        layout.addWidget(self.attachment_label)
+        self.attachment_label.hide()
+        self.attachment_strip = QScrollArea(self)
+        self.attachment_strip.setWidgetResizable(True)
+        self.attachment_strip.setFixedHeight(112)
+        self.attachment_strip.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.attachment_content = QWidget(self.attachment_strip)
+        self.attachment_layout = QHBoxLayout(self.attachment_content)
+        self.attachment_layout.setContentsMargins(0, 0, 0, 0)
+        self.attachment_layout.addStretch(1)
+        self.attachment_strip.setWidget(self.attachment_content)
+        layout.addWidget(self.attachment_strip)
         self.composer = QWidget(self)
         self.composer.setObjectName('composer')
         composer_layout = QVBoxLayout(self.composer)
         composer_layout.setContentsMargins(14, 12, 14, 10)
         composer_layout.setSpacing(6)
-        self.input = QuestionEdit(self.composer)
+        self.input = ChatInput(self.composer)
+        self.input.image_pasted.connect(self.add_clipboard_image)
+        self.input.setToolTip('Ctrl+V to paste text or an image / Ctrl+V 粘贴文字或图片')
         self.input.setPlaceholderText('Ask anything')
         self.input.setFixedHeight(44)
         self.input.submit.connect(self.send_message)
@@ -320,7 +395,18 @@ class ConversationWindow(QWidget):
         self._preferences_changed()
         self.status_label.setText(f'{len(models)} models loaded.')
 
+    def _fit_model_selector(self):
+        selected = self.model_combo.currentText()
+        metrics = self.model_combo.fontMetrics()
+        width = metrics.horizontalAdvance(selected) + 48
+        self.model_combo.setMinimumWidth(max(100, width))
+        self.model_combo.setToolTip(selected or 'Select model')
+        popup_width = max((metrics.horizontalAdvance(self.model_combo.itemText(i)) + 48
+                           for i in range(self.model_combo.count())), default=100)
+        self.model_combo.view().setMinimumWidth(popup_width)
+
     def _preferences_changed(self, *_):
+        self._fit_model_selector()
         if self.pending:
             return
         self.state['model'] = self.model_combo.currentText().strip()
@@ -358,36 +444,43 @@ class ConversationWindow(QWidget):
             if item.widget():
                 item.widget().deleteLater()
         self._browsers.clear()
+        self.empty_chat_label.setVisible(not self.state.get('messages'))
+        self.empty_chat_label.raise_()
         for message in self.state.get('messages', []):
             self._add_message(message)
 
     def _add_message(self, message):
+        self.empty_chat_label.hide()
         card = QWidget(self.content)
         row = QHBoxLayout(card)
         row.setContentsMargins(0, 0, 0, 0)
         user = message.get('role') == 'user'
         body = QWidget(card)
-        body.setObjectName('userBubble' if user else 'assistantMessage')
+        body.setObjectName('userTurn' if user else 'assistantMessage')
         if user:
             body.setMaximumWidth(max(240, round(self.width() * 0.78)))
             row.addStretch(1)
         row.addWidget(body, 0 if user else 1)
         card_layout = QVBoxLayout(body)
-        card_layout.setContentsMargins(18, 12, 18, 12) if user else card_layout.setContentsMargins(0, 6, 0, 6)
-        for image in message.get('images', []):
-            try:
-                data = base64.b64decode(image['data_url'].split(',', 1)[1], validate=True)
-                pixmap = QPixmap()
-                if not pixmap.loadFromData(data):
-                    continue
-                preview = QLabel(card)
-                preview.setPixmap(pixmap.scaled(380, 180, Qt.AspectRatioMode.KeepAspectRatio,
-                                               Qt.TransformationMode.SmoothTransformation))
-                preview.setToolTip(str(image.get('name', 'Image')))
-                card_layout.addWidget(preview)
-            except (ValueError, KeyError, TypeError, AttributeError):
-                continue
-        browser = ChatMessageBrowser(body)
+        card_layout.setContentsMargins(0, 0, 0, 0)
+        if message.get('images'):
+            pictures = QWidget(body)
+            picture_row = QHBoxLayout(pictures)
+            picture_row.setContentsMargins(0, 0, 0, 0)
+            picture_row.setSpacing(8)
+            if user:
+                picture_row.addStretch(1)
+            for image in message['images']:
+                picture_row.addWidget(ImageThumbnail(image, size=112, parent=pictures))
+            card_layout.addWidget(pictures)
+        bubble = QWidget(body)
+        bubble.setObjectName('userBubble' if user else 'assistantBody')
+        bubble_layout = QVBoxLayout(bubble)
+        bubble_layout.setContentsMargins(18, 12, 18, 12) if user else bubble_layout.setContentsMargins(0, 6, 0, 6)
+        card_layout.addWidget(bubble)
+        if user and not message.get('text', '').strip():
+            bubble.hide()
+        browser = ChatMessageBrowser(bubble)
         font = QFont('Segoe UI')
         font.setPixelSize(16)
         browser.setFont(font)
@@ -409,7 +502,7 @@ class ConversationWindow(QWidget):
         browser.document().documentLayout().documentSizeChanged.connect(lambda *_: self._fit_browser(browser))
         browser.selectionChanged.connect(self._selection_changed)
         browser.viewport().installEventFilter(self)
-        card_layout.addWidget(browser)
+        bubble_layout.addWidget(browser)
         self._browsers.append(browser)
         self.messages_layout.insertWidget(self.messages_layout.count() - 1, card)
         self._fit_browser(browser)
@@ -427,7 +520,7 @@ class ConversationWindow(QWidget):
         for browser in self._browsers:
             user = browser.objectName() == 'userMessage'
             if user:
-                browser.parentWidget().setMaximumWidth(max(240, round(self.width() * 0.78)))
+                browser.parentWidget().parentWidget().setMaximumWidth(max(240, round(self.width() * 0.78)))
             browser.document().setTextWidth(max(100, self.width() * (0.78 if user else 1) - 80))
             self._fit_browser(browser)
 
@@ -441,6 +534,30 @@ class ConversationWindow(QWidget):
         paths, _ = QFileDialog.getOpenFileNames(self, 'Add images', '', 'Images (*.png *.jpg *.jpeg *.webp *.bmp *.gif)')
         self.add_images(paths)
 
+    @staticmethod
+    def _encode_attachment(image, name):
+        if image.isNull():
+            raise ValueError('Could not open the selected image.')
+        if image.sizeInBytes() > 160 * 1024 * 1024:
+            raise ValueError('The decoded image is too large.')
+        data = QByteArray()
+        buffer = QBuffer(data)
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        if not image.save(buffer, 'PNG') or len(data) > 20 * 1024 * 1024:
+            raise ValueError('The decoded image exceeds 20 MB.')
+        return {'name': name, 'data_url': 'data:image/png;base64,' + base64.b64encode(bytes(data)).decode('ascii')}
+
+    def add_clipboard_image(self, image):
+        if self.pending or self.disposed:
+            return
+        try:
+            number = 1 + sum(item['name'].startswith('clipboard-') for item in self.attachments)
+            self.attachments.append(self._encode_attachment(image, f'clipboard-{number}.png'))
+            self._update_attachments()
+            self._save()
+        except ValueError as error:
+            self.status_label.setText(str(error))
+
     def add_images(self, paths):
         if self.pending:
             return
@@ -450,16 +567,7 @@ class ConversationWindow(QWidget):
                 source = Path(path)
                 if source.stat().st_size > 20 * 1024 * 1024:
                     raise ValueError('Each image must be smaller than 20 MB.')
-                image = QImage(str(source))
-                if image.isNull():
-                    raise ValueError('Could not open the selected image.')
-                data = QByteArray()
-                buffer = QBuffer(data)
-                buffer.open(QIODevice.OpenModeFlag.WriteOnly)
-                if not image.save(buffer, 'PNG') or len(data) > 20 * 1024 * 1024:
-                    raise ValueError('The decoded image exceeds 20 MB.')
-                additions.append({'name': source.name,
-                                  'data_url': 'data:image/png;base64,' + base64.b64encode(bytes(data)).decode('ascii')})
+                additions.append(self._encode_attachment(QImage(str(source)), source.name))
             self.attachments.extend(additions)
             self._update_attachments()
         except (OSError, ValueError) as error:
@@ -469,11 +577,29 @@ class ConversationWindow(QWidget):
         self.attachments.clear()
         self._update_attachments()
 
+    def remove_attachment(self, attachment):
+        if self.pending:
+            return
+        for index, item in enumerate(self.attachments):
+            if item is attachment:
+                self.attachments.pop(index)
+                break
+        self._update_attachments()
+        self._save()
+
     def _update_attachments(self):
         if hasattr(self, 'remove_images_button'):
-            self.remove_images_button.setVisible(bool(self.attachments))
-        self.attachment_label.setVisible(bool(self.attachments))
-        self.attachment_label.setText('Images: ' + ', '.join(item['name'] for item in self.attachments) if self.attachments else '')
+            self.remove_images_button.hide()
+        self.attachment_label.hide()
+        while self.attachment_layout.count() > 1:
+            item = self.attachment_layout.takeAt(0)
+            item.widget().hide()
+            item.widget().deleteLater()
+        for attachment in self.attachments:
+            thumbnail = ImageThumbnail(attachment, removable=True, parent=self.attachment_content)
+            thumbnail.remove_requested.connect(lambda attachment=attachment: self.remove_attachment(attachment))
+            self.attachment_layout.insertWidget(self.attachment_layout.count() - 1, thumbnail)
+        self.attachment_strip.setVisible(bool(self.attachments))
 
     def send_message(self):
         if self.pending or self.disposed or not self.providers:
@@ -696,6 +822,11 @@ class ConversationWindow(QWidget):
         self.setGeometry(rect)
 
     def eventFilter(self, watched, event):
+        if watched is self.scroll.viewport() and event.type() == QEvent.Type.Resize:
+            self.empty_chat_label.setGeometry(self.scroll.viewport().rect())
+        if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
+            self.close()
+            return True
         if event.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseMove, QEvent.Type.MouseButtonRelease):
             point = self.mapFromGlobal(event.globalPosition().toPoint())
             edges = self._resize_edges(point)

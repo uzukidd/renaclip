@@ -11,29 +11,13 @@
 
 <img src="README.assets/demo_1.gif" style="zoom:45%;" />
 
-
-
----
-
-## To-does
-
-- [X] More friendly user interface.
-- [X] Sync Gems with Gemini.
-- [X] Supports multiple backends (Gemini & OpenAI-compatible).
-- [X] Supports variant models.
-- [X] Native Windows folder distribution with PyInstaller (PySide6 / Qt).
-- [X] Display screenshot answers directly in an editable pop-up overlay.
-- [ ] Stack-based clipboard.
-- [ ] Supports multimodal input and response.
-
 ---
 
 ## Overview
 
-RenaClip runs a clipboard service in the system tray. You define **skills** (each with a name, description, and system prompt). When you press a hotkey (e.g. **Ctrl+1**, **Ctrl+2**), the current clipboard content is sent to the corresponding gem; the model's reply is written back to the clipboard and a notification is shown.
+RenaClip runs a clipboard service in the system tray. You define **skills** (each with a name, description, and system prompt). When you press a hotkey (e.g. **Ctrl+1**, **Ctrl+2**), the current clipboard content is sent to the corresponding skill; the model's reply is written back to the clipboard and a notification is shown.
 
-- **UI**: The production main window and dialogs use **PySide6 / Qt Quick Material**, matching the compact layout shown below. Screenshot Q&A and the tray share the same Qt application and UI thread. No Flet, Flutter or Tkinter runtime is required.
-- **Tray**: Service runs in the background; left-click the tray icon to open the UI, or use the menu to exit.
+
 
 ### Supported Backends
 
@@ -129,11 +113,7 @@ Switch between **Gemini** and **OpenAI** backends. Each section shows the releva
 
 ### 4. Screenshot QA
 
-Enable **Screenshot Q&A** in **Settings** and save. Press the configured hotkey modifier plus `0` (for example, `Ctrl+Shift+0`) to start it. Drag to select a region of the screen, then type a question in the panel on the right and press **Enter** to send; use **Shift+Enter** for a new line. A thinking indicator appears while the answer is being generated, and the completed answer can be scrolled. Click a completed Q&A bubble to edit and resubmit the question. Click outside the selected region and Q&A bubbles to select a new screenshot, or press **Esc** to exit.
-
-<a id="screenshot-pin"></a>
-
-Click the **push-pin icon in the screenshot's upper-right corner** after selection, while waiting, during generation, or after completion. The original screenshot selection, question editor, and answer bubble remain available. Only the desktop shading disappears; clicks outside these visible regions go directly to other applications. Output continues in the original browser. Drag the screenshot, answer caption, or bubble padding to move the entire group. Double-click the pinned **image** (or press **Esc** while focused) to close it and cancel unfinished generation. There are no text Pin/Close buttons. Another capture can be opened while existing groups remain pinned; pins last only for the current session. The question stays beside the selected image without reserving future answer height. Answers grow below when possible, above when space below is insufficient, or use a side fallback on constrained screens; overflow scrolls instead of moving the question.
+Enable **Screenshot Q&A** in **Settings** and save. Press the configured hotkey modifier plus `0` (for example, `Ctrl+Shift+0`) to start it. 
 
 ![image-20260906120554904](README.assets/image-20260906120554904.png)
 
@@ -141,7 +121,15 @@ Click the **push-pin icon in the screenshot's upper-right corner** after selecti
 
 ### 5. RenaChat
 
-TBD
+Always-on-top continuous chat with Markdown and LaTeX support. Requires a provider that supports the **Responses API**.
+
+- **Open / recall:** Enable RenaChat in **Settings**, then press the configured modifier + **9** (e.g. `Ctrl+9`). Press again to move the window to your mouse. Drag the header to move; drag any edge to resize.
+- **Chat:** Select a provider, model and reasoning effort; use **↻** to refresh models. **Enter** sends, **Shift+Enter** adds a line, and the mouse wheel scrolls history.
+- **Images / search:** Click **+** or paste an image with **Ctrl+V**. Hover a thumbnail and click **×** to remove it. Check **Web search** to enable search when supported by the provider/model.
+- **Hide / resume:** Press **Esc** or double-click the header/background. Generation continues while hidden; reopening preserves the conversation. History, images and drafts are saved locally across restarts.
+- **Stop / reset:** **■** stops generation and restores the draft. The top-right **new-conversation icon** clears local history and starts a fresh conversation.
+
+![renachat_0](D:\Workplace\renaclip\README.assets\renachat_0.png)
 
 ## Configuration
 
