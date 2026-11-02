@@ -129,7 +129,7 @@ Always-on-top continuous chat with Markdown and LaTeX support. Requires a provid
 - **Hide / resume:** Press **Esc** or double-click the header/background. Generation continues while hidden; reopening preserves the conversation. History, images and drafts are saved locally across restarts.
 - **Stop / reset:** **■** stops generation and restores the draft. The top-right **new-conversation icon** clears local history and starts a fresh conversation.
 
-![renachat_0](D:\Workplace\renaclip\README.assets\renachat_0.png)
+![renachat_0](README.assets\renachat_0.png)
 
 ## Configuration
 
