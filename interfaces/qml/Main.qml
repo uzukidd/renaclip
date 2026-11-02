@@ -29,6 +29,7 @@ ApplicationWindow {
 
     function text(value) { return value === undefined || value === null ? "" : String(value) }
     function openSkill(index) {
+        if (index < 0 && bridge.skills.length >= 8) return
         bridge.clearError(); localError = ""; editIndex = index
         var entry = index >= 0 ? bridge.skills[index] : {}
         skillName.text = text(entry.name); skillDescription.text = text(entry.description)
@@ -41,6 +42,7 @@ ApplicationWindow {
         var s = bridge.beginSettings()
         hotkeyField.currentIndex = Math.max(0, hotkeyField.model.indexOf(text(s.HOTKEY_MODIFIER) || "ctrl"))
         startupToggle.checked = !!s.START_WITH_WINDOWS
+        continuousChatToggle.checked = s.CONTINUOUS_CHAT_ENABLED !== false
         screenshotToggle.checked = !!s.SCREENSHOT_QA_ENABLED; searchToggle.checked = !!s.SCREENSHOT_QA_WEB_SEARCH
         draftBackend = text(s.BACKEND) || "openai"
         psid.text = text(s.GEMINI_PSID); psidts.text = text(s.GEMINI_PSIDTS)
@@ -221,7 +223,7 @@ ApplicationWindow {
                 combo.onActivated: bridge.setRoute(currentIndex)
             }
             OutlineButton { objectName: "settingsButton"; text: "Settings"; Layout.preferredWidth: 100; onClicked: root.openSettings() }
-            PinkButton { objectName: "addSkillButton"; text: "Add Skill"; Layout.preferredWidth: 105; onClicked: root.openSkill(-1) }
+            PinkButton { objectName: "addSkillButton"; text: "Add Skill"; enabled: bridge && bridge.skills.length < 8; Layout.preferredWidth: 105; onClicked: root.openSkill(-1) }
         }
         Rule {}
         ErrorLabel { visible: !settingsDialog.visible && !skillDialog.visible && !providerDialog.visible && text.length > 0 }
@@ -252,7 +254,7 @@ ApplicationWindow {
                     ColumnLayout { Layout.fillWidth: true; spacing: 12
                         RowLayout { spacing: 8; Layout.fillWidth: true
                             Label { text: root.text(card.modelData.name); font.family: "Microsoft YaHei UI"; font.pixelSize: 16; font.weight: Font.DemiBold; elide: Text.ElideRight; Layout.maximumWidth: Math.max(100, card.width - 420) }
-                            Rectangle { implicitWidth: shortcutLabel.implicitWidth + 16; implicitHeight: 24; radius: 4; color: paletteTokens.accent
+                            Rectangle { objectName: "skillShortcut" + card.index; visible: card.index < 8; implicitWidth: shortcutLabel.implicitWidth + 16; implicitHeight: 24; radius: 4; color: paletteTokens.accent
                                 Label { id: shortcutLabel; anchors.centerIn: parent; text: (bridge ? bridge.hotkey : "") + "+" + (card.index + 1); font.pixelSize: 10 }
                             }
                             MaterialIconButton { symbol: "public"; tip: "Web search enabled"; visible: !!card.modelData.web_search; padding: 0; implicitWidth: 20; implicitHeight: 24; icon.width: 16; icon.height: 16; icon.color: paletteTokens.accentLight }
@@ -292,7 +294,7 @@ ApplicationWindow {
         commit: function() {
             root.localError = ""
             bridge.updateSettingsDraft({START_WITH_WINDOWS:startupToggle.checked, HOTKEY_MODIFIER:hotkeyField.currentText, BACKEND:root.draftBackend,
-                SCREENSHOT_QA_ENABLED:screenshotToggle.checked, SCREENSHOT_QA_WEB_SEARCH:searchToggle.checked,
+                CONTINUOUS_CHAT_ENABLED:continuousChatToggle.checked, SCREENSHOT_QA_ENABLED:screenshotToggle.checked, SCREENSHOT_QA_WEB_SEARCH:searchToggle.checked,
                 GEMINI_PSID:psid.text, GEMINI_PSIDTS:psidts.text, GEMINI_PROXY:proxyField.text,
                 GEMINI_USE_BROWSER_COOKIE:browserCookie.checked, GEMINI_COOKIE_BROWSER:browserField.currentText,
                 GEMINI_MODEL:geminiModel.currentText})
@@ -307,6 +309,8 @@ ApplicationWindow {
                 Rule {}
                 Label { text: "Hotkey"; font.weight: Font.DemiBold }
                 SelectField { id: hotkeyField; objectName: "hotkeyModifier"; Layout.fillWidth: true; label: "Hotkey modifier"; model: ["ctrl", "ctrl+shift", "ctrl+alt", "ctrl+shift+alt"] }
+                Rule {}
+                CheckBox { id: continuousChatToggle; objectName: "continuousChatEnabled"; implicitHeight: 34; text: "RenaChat (Hotkey + 9)" }
                 Rule {}
                 Label { text: "Screenshot QA"; font.weight: Font.DemiBold }
                 CheckBox { id: screenshotToggle; objectName: "screenshotEnabled"; implicitHeight: 34; text: "Screenshot Q&A (Hotkey + 0)" }

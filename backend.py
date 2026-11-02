@@ -33,6 +33,7 @@ class RenaClipApp:
     gemini_proxy: str | None = None
     gemini_cookie_browser: str | None = None
     gemini_use_browser_cookie: bool = False
+    continuous_chat_enabled: bool = True
     screenshot_qa_enabled: bool = False
     screenshot_qa_web_search: bool = False
     openai_reasoning_effort: str = "default"
@@ -98,6 +99,7 @@ class RenaClipApp:
             gemini_proxy=gemini_proxy,
             gemini_cookie_browser=gemini_cookie_browser,
             gemini_use_browser_cookie=gemini_use_browser_cookie,
+            continuous_chat_enabled=settings.get("CONTINUOUS_CHAT_ENABLED", True) is True,
             screenshot_qa_enabled=settings.get("SCREENSHOT_QA_ENABLED", False) is True,
             screenshot_qa_web_search=settings.get("SCREENSHOT_QA_WEB_SEARCH", False) is True,
             openai_reasoning_effort=normalize_reasoning_effort(settings.get("OPENAI_REASONING_EFFORT")),
@@ -220,11 +222,11 @@ async def process_clipboard_openai(app: RenaClipApp, chat_index: int, text: str)
             pass
 
 
-def register_app_hotkeys(keyboard_module, modifier, gem_callback, screenshot_callback=None):
+def register_app_hotkeys(keyboard_module, modifier, gem_callback, screenshot_callback=None, chat_callback=None):
     """Return only this app's hook handles, including optional screenshot Q&A."""
     handles = []
     try:
-        for index in range(9):
+        for index in range(8):
             handles.append(keyboard_module.add_hotkey(
                 f"{modifier}+{index + 1}", lambda index=index: gem_callback(index),
             ))
@@ -232,6 +234,10 @@ def register_app_hotkeys(keyboard_module, modifier, gem_callback, screenshot_cal
             # Non-suppressing keyboard hooks lose the full chord on key release.
             handles.append(keyboard_module.add_hotkey(
                 f"{modifier}+0", screenshot_callback, trigger_on_release=False,
+            ))
+        if chat_callback is not None:
+            handles.append(keyboard_module.add_hotkey(
+                f"{modifier}+9", chat_callback, trigger_on_release=False,
             ))
     except Exception:
         for handle in handles:

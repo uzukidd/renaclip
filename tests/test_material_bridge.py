@@ -105,6 +105,24 @@ class MaterialBridgeTests(unittest.TestCase):
         self.assertFalse(self.bridge.moveSkill(99, 0))
         self.assertEqual(self.path.read_bytes(), original)
 
+    def test_eight_skill_limit_preserves_legacy_entries(self):
+        for count in (8, 10):
+            with self.subTest(count=count):
+                skills = [{"name": f"Skill {i}", "custom": i} for i in range(count)]
+                config_loader.save_config(skills, deepcopy(self.initial_settings))
+                self.bridge.refresh()
+                original = self.path.read_bytes()
+                self.assertFalse(self.bridge.saveSkill(-1, {"name": "Extra"}))
+                self.assertIn("eight", self.bridge.errorMessage)
+                self.assertEqual(self.path.read_bytes(), original)
+                self.assertTrue(self.bridge.saveSkill(count - 1, {"name": "Edited legacy"}))
+                self.assertEqual(len(self.disk()["gems"]), count)
+                self.assertEqual(self.disk()["gems"][-1]["custom"], count - 1)
+        while len(self.bridge.skills) >= 8:
+            self.assertTrue(self.bridge.deleteSkill(0))
+        self.assertTrue(self.bridge.saveSkill(-1, {"name": "Eighth"}))
+        self.assertEqual(len(self.bridge.skills), 8)
+
     def test_delete_last_skill_keeps_intentionally_empty_list_on_reload(self):
         self.assertTrue(self.bridge.deleteSkill(1))
         self.assertTrue(self.bridge.deleteSkill(0))
@@ -123,7 +141,7 @@ class MaterialBridgeTests(unittest.TestCase):
         self.assertTrue(self.bridge.saveProvider(0, edited))
         self.assertTrue(self.bridge.saveProvider(-1, {"name": "C", "models": ["c"]}))
         self.assertTrue(self.bridge.deleteProvider(1))
-        self.bridge.updateSettingsDraft({"BACKEND": "gemini", "GEMINI_PSID": "draft-cookie"})
+        self.bridge.updateSettingsDraft({"BACKEND": "gemini", "GEMINI_PSID": "draft-cookie", "CONTINUOUS_CHAT_ENABLED": False})
         self.assertEqual(self.bridge.settings, settings)
         self.bridge.cancelSettings()
         self.assertEqual(self.bridge.settingsDraft, {})
@@ -159,7 +177,7 @@ class MaterialBridgeTests(unittest.TestCase):
     def test_settings_save_all_fields_validation_and_unknown_key_guard(self):
         self.bridge.beginSettings()
         fields = {"BACKEND": "gemini", "HOTKEY_MODIFIER": "ctrl+alt",
-                  "SCREENSHOT_QA_ENABLED": True, "SCREENSHOT_QA_WEB_SEARCH": True,
+                  "CONTINUOUS_CHAT_ENABLED": False, "SCREENSHOT_QA_ENABLED": True, "SCREENSHOT_QA_WEB_SEARCH": True,
                   "GEMINI_PSID": "test-cookie", "GEMINI_PSIDTS": "test-timestamp",
                   "GEMINI_PROXY": "socks5://localhost:9999", "GEMINI_MODEL": "gemini-3.0-pro",
                   "GEMINI_COOKIE_BROWSER": "chrome", "GEMINI_USE_BROWSER_COOKIE": True}

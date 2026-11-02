@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from PySide6.QtCore import Qt, QTimer, QModelIndex
 from PySide6.QtTest import QTest, QSignalSpy
-from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox
+from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QLabel
 
 import config_loader
 from interfaces.menu import MainWindow, SettingsDialog, ProviderDialog, SkillDialog
@@ -102,6 +102,7 @@ class QtMenuTests(unittest.TestCase):
         self.assertTrue(dialog.providers[1]["streaming"])
         self.assertEqual(self.window.settings["OPENAI_PROVIDERS"][1]["name"], "B")
         self.assertEqual(self.path.read_bytes(), before)
+        dialog.continuous_chat_checkbox.setChecked(False)
         self.click_cancel(dialog)
         self.assertEqual(self.path.read_bytes(), before)
 
@@ -111,6 +112,8 @@ class QtMenuTests(unittest.TestCase):
         dialog._store_provider({**dialog.providers[1], "name": "Renamed B", "api_key": "secret", "base_url": "https://example.org/v1", "streaming": True}, 1)
         dialog.backend_combo.setCurrentText("gemini")
         dialog.hotkey_combo.setCurrentText("ctrl+shift")
+        self.assertTrue(dialog.continuous_chat_checkbox.isChecked())
+        dialog.continuous_chat_checkbox.setChecked(False)
         dialog.screenshot_checkbox.setChecked(True)
         dialog.screenshot_web_search_checkbox.setChecked(True)
         dialog.psid_field.setText("psid")
@@ -122,7 +125,7 @@ class QtMenuTests(unittest.TestCase):
         dialog.gemini_model_combo.setCurrentText("gemini-3.0-pro")
         self.click_save(dialog)
         settings = config_loader.load_config()[1]
-        for key, value in {"BACKEND": "gemini", "HOTKEY_MODIFIER": "ctrl+shift", "SCREENSHOT_QA_ENABLED": True,
+        for key, value in {"BACKEND": "gemini", "HOTKEY_MODIFIER": "ctrl+shift", "CONTINUOUS_CHAT_ENABLED": False, "SCREENSHOT_QA_ENABLED": True,
                            "SCREENSHOT_QA_WEB_SEARCH": True, "GEMINI_PSID": "psid", "GEMINI_PSIDTS": "psidts",
                            "GEMINI_PROXY": "socks5://localhost:8889", "GEMINI_USE_BROWSER_COOKIE": True,
                            "GEMINI_COOKIE_BROWSER": "chrome", "GEMINI_MODEL": "gemini-3.0-pro"}.items():
@@ -172,6 +175,26 @@ class QtMenuTests(unittest.TestCase):
         self.assertEqual([g["name"] for g in config_loader.load_config()[0]], ["Second", "Third", "Edited"])
         self.window.delete_skill(1)
         self.assertEqual([g["name"] for g in config_loader.load_config()[0]], ["Second", "Edited"])
+
+    def test_skill_limit_and_legacy_shortcut_labels(self):
+        for count in (8, 10):
+            with self.subTest(count=count):
+                skills = [{"name": f"Skill {i}"} for i in range(count)]
+                config_loader.save_config(skills, self.window.settings)
+                self.window.refresh()
+                self.assertFalse(self.window.add_skill_button.isEnabled())
+                with patch("interfaces.menu.SkillDialog") as dialog:
+                    self.window.edit_skill(None)
+                    dialog.assert_not_called()
+                self.assertEqual(config_loader.load_config()[0], skills)
+                for index in range(count):
+                    card = self.window.skill_list.itemWidget(self.window.skill_list.item(index))
+                    title = card.findChildren(QLabel)[0].text()
+                    self.assertEqual("Ctrl+" in title, index < 8)
+        self.window.delete_skill(9)
+        self.window.delete_skill(8)
+        self.window.delete_skill(7)
+        self.assertTrue(self.window.add_skill_button.isEnabled())
 
     def test_model_refresh_executor_and_error(self):
         submitted = []

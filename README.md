@@ -11,29 +11,13 @@
 
 <img src="README.assets/demo_1.gif" style="zoom:45%;" />
 
-
-
----
-
-## To-does
-
-- [X] More friendly user interface.
-- [X] Sync Gems with Gemini.
-- [X] Supports multiple backends (Gemini & OpenAI-compatible).
-- [X] Supports variant models.
-- [X] Native Windows folder distribution with PyInstaller (PySide6 / Qt).
-- [X] Display screenshot answers directly in an editable pop-up overlay.
-- [ ] Stack-based clipboard.
-- [ ] Supports multimodal input and response.
-
 ---
 
 ## Overview
 
-RenaClip runs a clipboard service in the system tray. You define **skills** (each with a name, description, and system prompt). When you press a hotkey (e.g. **Ctrl+1**, **Ctrl+2**), the current clipboard content is sent to the corresponding gem; the model's reply is written back to the clipboard and a notification is shown.
+RenaClip runs a clipboard service in the system tray. You define **skills** (each with a name, description, and system prompt). When you press a hotkey (e.g. **Ctrl+1**, **Ctrl+2**), the current clipboard content is sent to the corresponding skill; the model's reply is written back to the clipboard and a notification is shown.
 
-- **UI**: The production main window and dialogs use **PySide6 / Qt Quick Material**, matching the compact layout shown below. Screenshot Q&A and the tray share the same Qt application and UI thread. No Flet, Flutter or Tkinter runtime is required.
-- **Tray**: Service runs in the background; left-click the tray icon to open the UI, or use the menu to exit.
+
 
 ### Supported Backends
 
@@ -112,8 +96,6 @@ Set the skill **name**, **description**, and **prompt** (system instruction). En
 
 Enable **Popup mode** in a Skill editor to stream its response into a topmost window beside the mouse cursor instead of updating the clipboard. The window opens immediately with a spinner and **Thinking...**, then switches to the streamed answer when text arrives; drag its title bar to move it, select text and press **Ctrl+C** or click **Copy**, and double-click the popup to close it. Closing also cancels unfinished generation. Popup mode requests streaming even when provider streaming is disabled. Each Skill stores this option locally as `popup_mode` (default `false`).
 
-**弹窗模式：** 在 Skill 编辑窗口勾选 **Popup mode** 并保存。触发后立即在鼠标光标旁显示置顶弹窗，以转圈和 **Thinking...** 等待，收到文字后切换为流式回答，不自动修改剪贴板；拖动标题栏可移动，选择文字后按 **Ctrl+C** 或点击 **Copy** 可复制，双击弹窗可关闭并取消未完成生成。弹窗模式会强制请求流式输出，该选项按 Skill 保存，默认关闭。
-
 ![Edit Gem](README.assets/edit.png)
 
 ### 3. Settings
@@ -131,19 +113,23 @@ Switch between **Gemini** and **OpenAI** backends. Each section shows the releva
 
 ### 4. Screenshot QA
 
-Enable **Screenshot Q&A** in **Settings** and save. Press the configured hotkey modifier plus `0` (for example, `Ctrl+Shift+0`) to start it. Drag to select a region of the screen, then type a question in the panel on the right and press **Enter** to send; use **Shift+Enter** for a new line. A thinking indicator appears while the answer is being generated, and the completed answer can be scrolled. Click a completed Q&A bubble to edit and resubmit the question. Click outside the selected region and Q&A bubbles to select a new screenshot, or press **Esc** to exit.
-
-<a id="screenshot-pin"></a>
-
-**Pin the capture UI** ([中文说明](#screenshot-pin-zh)): Click the **push-pin icon in the screenshot's upper-right corner** after selection, while waiting, during generation, or after completion. The original screenshot selection, question editor, and answer bubble remain available. Only the desktop shading disappears; clicks outside these visible regions go directly to other applications. Output continues in the original browser. Drag the screenshot, answer caption, or bubble padding to move the entire group. Double-click the pinned **image** (or press **Esc** while focused) to close it and cancel unfinished generation. There are no text Pin/Close buttons. Another capture can be opened while existing groups remain pinned; pins last only for the current session. The question stays beside the selected image without reserving future answer height. Answers grow below when possible, above when space below is insufficient, or use a side fallback on constrained screens; overflow scrolls instead of moving the question.
-
-<a id="screenshot-pin-zh"></a>
-
-**固定原截屏界面**（[English](#screenshot-pin)）：框选后点击**图片右上角的大头针图标**即可固定，等待、生成和完成状态均可使用。原截图、问题输入框和回答气泡继续保留，仅移除桌面遮罩；可见区域以外的点击直接交给其他应用。拖动截图、回答标题或气泡留白处可移动整组界面。**双击已固定的图片**，或在界面获得焦点时按 **Esc**，可关闭并取消未完成生成；不再显示 Pin/Close 文字按钮。固定后可以再次启动截图，固定结果仅在当前应用会话内保留。问题框只按自身高度靠近选区定位，不再为长回答预留空间；回答下方放不下时向上展开，特殊狭小屏幕可回退到侧边，超长内容使用滚动而不移动问题框。
+Enable **Screenshot Q&A** in **Settings** and save. Press the configured hotkey modifier plus `0` (for example, `Ctrl+Shift+0`) to start it. 
 
 ![image-20260906120554904](README.assets/image-20260906120554904.png)
 
 ---
+
+### 5. RenaChat
+
+Always-on-top continuous chat with Markdown and LaTeX support. Requires a provider that supports the **Responses API**.
+
+- **Open / recall:** Enable RenaChat in **Settings**, then press the configured modifier + **9** (e.g. `Ctrl+9`). Press again to move the window to your mouse. Drag the header to move; drag any edge to resize.
+- **Chat:** Select a provider, model and reasoning effort; use **↻** to refresh models. **Enter** sends, **Shift+Enter** adds a line, and the mouse wheel scrolls history.
+- **Images / search:** Click **+** or paste an image with **Ctrl+V**. Hover a thumbnail and click **×** to remove it. Check **Web search** to enable search when supported by the provider/model.
+- **Hide / resume:** Press **Esc** or double-click the header/background. Generation continues while hidden; reopening preserves the conversation. History, images and drafts are saved locally across restarts.
+- **Stop / reset:** **■** stops generation and restores the draft. The top-right **new-conversation icon** clears local history and starts a fresh conversation.
+
+![renachat_0](README.assets/renachat_0.png)
 
 ## Configuration
 
