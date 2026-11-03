@@ -4,8 +4,8 @@ All coordinates are Qt logical pixels. Network callbacks arrive through the
 application's AsyncExecutor; the overlay never owns a thread or event loop.
 """
 import base64
-import html
 import hashlib
+from uuid import uuid4
 from copy import deepcopy
 from urllib.parse import urlsplit
 
@@ -16,7 +16,7 @@ from PySide6.QtWidgets import QApplication, QLabel, QPlainTextEdit, QTextBrowser
 from interfaces import theme
 from interfaces.screenshot_layout import place_question, place_answer
 from constants import RESOURCE_ROOT
-from interfaces.formula_rendering import FormulaRenderer, protect_formulas
+from interfaces.formula_rendering import FormulaRenderer, protect_formulas, markdown_math_delimiters
 from openai_client.screenshot_chat import ScreenshotConversation
 
 
@@ -72,12 +72,20 @@ class AnswerBrowser(QTextBrowser):
         self.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
         self.formula_renderer = FormulaRenderer()
         self.formula_sources = {}
+        self._markdown_source = None
 
     def clear(self):
+        self._markdown_source = None
         self.formula_sources.clear()
         super().clear()
 
+    def setPlainText(self, text):
+        self._markdown_source = None
+        self.formula_sources.clear()
+        super().setPlainText(text)
+
     def setMarkdown(self, source):
+        self._markdown_source = source
         protected, formulas = protect_formulas(source)
         self.formula_sources.clear()
         super().setMarkdown(protected)
@@ -117,34 +125,54 @@ class AnswerBrowser(QTextBrowser):
                 cursor.insertBlock()
 
     def createMimeDataFromSelection(self):
-        original_mime = super().createMimeDataFromSelection()
-        mime = QMimeData()
-        for format_name in original_mime.formats():
-            mime.setData(format_name, original_mime.data(format_name))
         selection = self.textCursor()
-        start, end = selection.selectionStart(), selection.selectionEnd()
-        text = selection.selectedText().encode("utf-16-le", errors="surrogatepass")
-        replacements = []
-        block = self.document().begin()
-        while block.isValid():
-            iterator = block.begin()
-            while not iterator.atEnd():
-                fragment = iterator.fragment()
-                fmt = fragment.charFormat()
-                if fmt.isImageFormat():
-                    original = self.formula_sources.get(fmt.toImageFormat().name())
-                    if original is not None:
-                        for position in range(max(start, fragment.position()), min(end, fragment.position() + fragment.length())):
-                            replacements.append((position - start, original))
-                iterator += 1
-            block = block.next()
-        for offset, original in reversed(replacements):
-            text = text[:offset * 2] + original.encode("utf-16-le") + text[(offset + 1) * 2:]
-        text = text.decode("utf-16-le", errors="surrogatepass").replace("\u2029", "\n")
+        mime = QMimeData()
+        if self._markdown_source is None:
+            mime.setText(selection.selectedText().replace('\u2029', '\n'))
+            return mime
+        if not selection.hasSelection():
+            mime.setText('')
+            return mime
+        if selection.selectionStart() == 0 and selection.selectionEnd() == self.document().characterCount() - 1:
+            # Preserve original Markdown apart from normalized math delimiters.
+            text = markdown_math_delimiters(self._markdown_source)
+        else:
+            # Export only the selected rich-text fragment. Replace local formula
+            # images before Markdown conversion; restore the TeX afterwards so
+            # the exporter cannot escape math delimiters or matrix backslashes.
+            document = QTextDocument()
+            document.setDefaultFont(self.document().defaultFont())
+            cursor = QTextCursor(document)
+            cursor.insertFragment(selection.selection())
+            replacements = []
+            formulas = {}
+            prefix = 'RENACLIPCOPY' + uuid4().hex.upper()
+            block = document.begin()
+            while block.isValid():
+                iterator = block.begin()
+                while not iterator.atEnd():
+                    fragment = iterator.fragment()
+                    fmt = fragment.charFormat()
+                    if fmt.isImageFormat():
+                        source = self.formula_sources.get(fmt.toImageFormat().name())
+                        if source is not None:
+                            for position in range(fragment.position(), fragment.position() + fragment.length()):
+                                marker = prefix + str(len(formulas)) + 'END'
+                                formulas[marker] = source
+                                replacements.append((position, marker))
+                    iterator += 1
+                block = block.next()
+            for position, marker in reversed(replacements):
+                cursor.setPosition(position)
+                cursor.setPosition(position + 1, QTextCursor.MoveMode.KeepAnchor)
+                cursor.insertText(marker, QTextCharFormat())
+            text = document.toMarkdown().rstrip('\n')
+            for marker, source in formulas.items():
+                text = text.replace(marker, markdown_math_delimiters(source))
         mime.setText(text)
-        # An external app cannot resolve document-local formula image URLs.
-        if replacements:
-            mime.setHtml("<pre>" + html.escape(text) + "</pre>")
+        mime.setData('text/markdown', QByteArray(text.encode('utf-8')))
+        # Omit text/html: rich-text paste should not take precedence over the
+        # Markdown text in editors that accept both clipboard representations.
         return mime
 
     def loadResource(self, resource_type, name):

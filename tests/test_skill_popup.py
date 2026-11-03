@@ -60,7 +60,7 @@ class SkillPopupTests(unittest.TestCase):
         self.assertTrue(self.popup.windowFlags() & Qt.WindowType.WindowStaysOnTopHint)
         self.assertTrue(self.popup.windowFlags() & Qt.WindowType.FramelessWindowHint)
         QTest.mouseClick(self.popup.copy_button,Qt.MouseButton.LeftButton)
-        self.assertEqual(APP.clipboard().text(),'Finished answer')
+        self.assertEqual(APP.clipboard().text(),'Finished **answer**')
 
     def test_waiting_close_and_empty_completion_stop_spinner(self):
         request=Mock()

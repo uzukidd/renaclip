@@ -7,12 +7,20 @@ import json
 import xml.etree.ElementTree as ET
 
 from PySide6.QtCore import QUrl, qInstallMessageHandler
-from PySide6.QtGui import QImage, QTextCursor, QTextDocument
+from PySide6.QtGui import QImage, QTextCursor, QTextDocument, QFontDatabase
 from PySide6.QtWidgets import QApplication
 from interfaces.formula_rendering import protect_formulas, qt_compatible_svg
 from interfaces.screenshot_overlay import AnswerBrowser
 
 APP = QApplication.instance() or QApplication([])
+# Qt's Markdown writer resolves bold/italic through actual font faces. The
+# Windows offscreen platform does not discover system fonts automatically.
+if os.name == 'nt':
+    from pathlib import Path
+    for name in ('segoeui.ttf', 'segoeuib.ttf', 'segoeuii.ttf', 'segoeuiz.ttf'):
+        font_path = Path(os.environ.get('WINDIR', 'C:/Windows')) / 'Fonts' / name
+        if font_path.is_file():
+            QFontDatabase.addApplicationFont(str(font_path))
 
 
 def images(document):
@@ -105,12 +113,79 @@ class FormulaTests(unittest.TestCase):
         self.browser.setMarkdown(source)
         self.browser.selectAll()
         mime = self.browser.createMimeDataFromSelection()
-        self.assertEqual(mime.text(), source)
+        self.assertEqual(mime.text(), '中文 😀 ' + r'$\frac{a}{b}$' + ' end')
         self.assertNotIn("renaclip-math:", mime.html())
         adjacent = r"\(x\)\(x\)"
         self.browser.setMarkdown(adjacent)
         self.browser.selectAll()
-        self.assertEqual(self.browser.createMimeDataFromSelection().text(), adjacent)
+        self.assertEqual(self.browser.createMimeDataFromSelection().text(), '$x$$x$')
+
+    def test_copy_entire_answer_preserves_exact_markdown_source(self):
+        source = '# Heading\n\n**Bold** and [Source](https://example.com)\n\n- first\n- second\n\n```python\nprint(1)\n```\n\n' + r'\[\frac{a}{b}\]'
+        self.browser.setMarkdown(source)
+        self.browser.selectAll()
+        mime = self.browser.createMimeDataFromSelection()
+        expected = source.replace(r'\[\frac{a}{b}\]', '$$\n' + r'\frac{a}{b}' + '\n$$')
+        self.assertEqual(mime.text(), expected)
+        self.assertEqual(bytes(mime.data('text/markdown')).decode('utf-8'), expected)
+        self.assertFalse(mime.hasHtml())
+
+    def test_partial_copy_preserves_bold_links_and_latex(self):
+        self.browser.setMarkdown('Before\n\n**Bold** and [Source](https://example.com) ' + r'\(x_i^2\)' + '\n\nAfter')
+        document = self.browser.document()
+        start = document.find('Bold').selectionStart()
+        end = document.find('After').selectionStart() - 1
+        cursor = QTextCursor(document)
+        cursor.setPosition(start)
+        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        self.browser.setTextCursor(cursor)
+        mime = self.browser.createMimeDataFromSelection()
+        self.assertIn('**Bold**', mime.text())
+        self.assertIn('[Source](https://example.com)', mime.text())
+        self.assertIn(r'$x_i^2$', mime.text())
+        self.assertNotIn('renaclip-math:', mime.text())
+        self.assertNotIn('RENACLIPCOPY', mime.text())
+        self.assertNotIn('Before', mime.text())
+        self.assertNotIn('After', mime.text())
+        self.assertFalse(mime.hasHtml())
+
+    def test_copy_normalizes_math_but_keeps_code_and_unfinished_tex(self):
+        source = r'Inline \(x^2\) and $y$.' + '\n\n' + r'\[a+b\]' + '\n\n' + r'`\(literal\)`' + '\n\n```latex\n' + r'\[literal\]' + '\n```\n\n' + r'\(unfinished'
+        self.browser.setMarkdown(source)
+        self.browser.selectAll()
+        copied = self.browser.createMimeDataFromSelection().text()
+        self.assertIn('Inline $x^2$ and $y$.', copied)
+        self.assertIn('$$\na+b\n$$', copied)
+        self.assertIn(r'`\(literal\)`', copied)
+        self.assertIn('```latex\n' + r'\[literal\]' + '\n```', copied)
+        self.assertTrue(copied.endswith(r'\(unfinished'))
+
+    def test_partial_display_formula_uses_dollar_block(self):
+        self.browser.setMarkdown('Before\n\n' + r'\[\frac{a}{b}\]' + '\n\nAfter')
+        document = self.browser.document()
+        block = document.begin()
+        while block.isValid():
+            iterator = block.begin()
+            while not iterator.atEnd():
+                fragment = iterator.fragment()
+                if fragment.charFormat().isImageFormat():
+                    cursor = QTextCursor(document)
+                    cursor.setPosition(fragment.position())
+                    cursor.setPosition(fragment.position() + 1, QTextCursor.MoveMode.KeepAnchor)
+                    self.browser.setTextCursor(cursor)
+                    self.assertEqual(self.browser.createMimeDataFromSelection().text(), '$$\n' + r'\frac{a}{b}' + '\n$$')
+                    return
+                iterator += 1
+            block = block.next()
+        self.fail('Formula image was not found')
+
+    def test_plain_text_resets_previous_markdown_source(self):
+        self.browser.setMarkdown('**old**')
+        self.browser.setPlainText('**literal**')
+        self.browser.selectAll()
+        self.assertEqual(self.browser.createMimeDataFromSelection().text(), '**literal**')
+        self.browser.clear()
+        self.assertEqual(self.browser.createMimeDataFromSelection().text(), '')
 
     def test_invalid_tex_is_readable_and_does_not_break_markdown(self):
         source = r"\(\notARealCommand{x}\)"
