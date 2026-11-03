@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (QApplication, QWidget, QLabel, QPushButton, QComb
 
 from config_loader import VALID_REASONING_EFFORTS
 from interfaces import theme
+from interfaces.window_activation import foreground_window
 from interfaces.screenshot_overlay import AnswerBrowser, QuestionEdit, safe_url
 from openai_client.desktop_chat import DesktopChatStore, provider_identity, request_chat
 from openai_client import fetch_available_models
@@ -525,10 +526,23 @@ class ConversationWindow(QWidget):
             self._fit_browser(browser)
 
     def show_chat(self):
-        self.show()
+        self.showNormal()
         self.raise_()
         self.activateWindow()
-        self.input.setFocus()
+        foreground_window(self.winId())
+        self._focus_chat_input()
+        # Native activation is queued. Set editor focus again once Qt receives
+        # WindowActivate instead of only recording an inactive window's focus.
+        QTimer.singleShot(0, self._focus_chat_input)
+
+    def _focus_chat_input(self):
+        if not self.disposed and self.isVisible() and self.isActiveWindow() and self.input.isEnabled():
+            self.input.setFocus(Qt.FocusReason.ShortcutFocusReason)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.ActivationChange and self.isActiveWindow():
+            QTimer.singleShot(0, self._focus_chat_input)
 
     def choose_images(self):
         paths, _ = QFileDialog.getOpenFileNames(self, 'Add images', '', 'Images (*.png *.jpg *.jpeg *.webp *.bmp *.gif)')

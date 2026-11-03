@@ -190,18 +190,18 @@ class SkillPopup(QWidget):
     def copy_text(self):
         if self.is_closed:
             return
-        # Reuse formula-aware plain-text extraction without changing user selection.
+        # Copy the full Markdown answer while preserving the user's selection.
         cursor = self.browser.textCursor()
         self.browser.blockSignals(True)
         try:
             all_text = QTextCursor(self.browser.document())
             all_text.select(QTextCursor.SelectionType.Document)
             self.browser.setTextCursor(all_text)
-            text = self.browser.createMimeDataFromSelection().text()
+            mime = self.browser.createMimeDataFromSelection()
             self.browser.setTextCursor(cursor)
         finally:
             self.browser.blockSignals(False)
-        QApplication.clipboard().setText(text)
+        QApplication.clipboard().setMimeData(mime)
 
     def _open_link(self, url):
         if not self.is_closed and safe_url(url.toString()):

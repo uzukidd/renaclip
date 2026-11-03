@@ -151,8 +151,7 @@ class Runtime(QObject):
             self.chat_window.move(x, y)
         else:
             self.chat_window.move(position)
-        if not was_visible:
-            self.chat_window.show_chat()
+        self.chat_window.show_chat()
 
     def run_skill(self, index):
         if self.closed or not 0 <= index < min(8, len(self.state.specs)):

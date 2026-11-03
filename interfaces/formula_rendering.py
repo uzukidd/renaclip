@@ -101,6 +101,19 @@ def protect_formulas(source: str):
     return "".join(pieces), formulas
 
 
+def markdown_math_delimiters(source: str):
+    """Normalize complete math outside code to dollar delimiters for copying."""
+    protected, formulas = protect_formulas(source)
+    for formula in formulas:
+        replacement = formula.source
+        if formula.complete and formula.source.startswith(r'\('):
+            replacement = '$' + formula.tex + '$'
+        elif formula.complete and formula.source.startswith(r'\['):
+            replacement = '$$\n' + formula.tex.strip('\r\n') + '\n$$'
+        protected = protected.replace(formula.marker, replacement)
+    return protected
+
+
 def qt_compatible_svg(svg, pixels_per_unit):
     """Rasterize nested viewports only: Qt SVG Tiny skips nested SVG/clips.
 

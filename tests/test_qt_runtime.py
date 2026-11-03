@@ -85,7 +85,7 @@ class QtRuntimeTests(unittest.TestCase):
                         cursor.return_value = QPoint(-20, 880)
                         runtime.chat_requested.emit()
                         configure.assert_not_called()
-                        show.assert_not_called()
+                        show.assert_called_once_with()
                     self.assertIs(runtime.chat_window, window)
                     self.assertEqual(window.size(), size)
                     self.assertEqual(window.pos(), QPoint(-size.width(), 900 - size.height()))
@@ -94,6 +94,11 @@ class QtRuntimeTests(unittest.TestCase):
                     request.cancel.assert_not_called()
                     window.pending = False
                     window.request = None
+                    window.clear_button.setFocus()
+                    self.app.processEvents()
+                    runtime.chat_requested.emit()
+                    self.app.processEvents()
+                    self.assertIs(window.focusWidget(), window.input)
                     window.close()
                     cursor.return_value = QPoint(-900, 30)
                     runtime.run_chat()
