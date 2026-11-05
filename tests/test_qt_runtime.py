@@ -75,7 +75,10 @@ class QtRuntimeTests(unittest.TestCase):
                 try:
                     runtime.run_chat()
                     window = runtime.chat_window
-                    self.assertEqual(window.pos(), QPoint(-988, 112))
+                    self.assertEqual(window.pos(), QPoint(-1200, 0))
+                    cursor.return_value = QPoint(-600, 450)
+                    runtime.chat_requested.emit()
+                    self.assertEqual(window.mapToGlobal(window.rect().center()), cursor.return_value)
                     window.input.setPlainText('keep draft')
                     window.pending = True
                     request = Mock()
@@ -103,7 +106,7 @@ class QtRuntimeTests(unittest.TestCase):
                     cursor.return_value = QPoint(-900, 30)
                     runtime.run_chat()
                     self.assertTrue(window.isVisible())
-                    self.assertEqual(window.pos(), QPoint(-888, 42))
+                    self.assertEqual(window.pos(), QPoint(max(-1200, -900 - window.rect().center().x()), 0))
                 finally:
                     runtime.close()
                     runtime.window.hide_on_close = False

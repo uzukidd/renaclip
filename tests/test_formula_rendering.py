@@ -179,6 +179,26 @@ class FormulaTests(unittest.TestCase):
             block = block.next()
         self.fail('Formula image was not found')
 
+    def test_copy_selected_code_without_markdown_wrappers(self):
+        code = 'def hello():\n    print("hello")\n    return 1'
+        self.browser.setMarkdown('Before\n\n```python\n' + code + '\n```\n\nAfter')
+        document = self.browser.document()
+        cursor = QTextCursor(document)
+        cursor.setPosition(document.find('def hello():').selectionStart())
+        cursor.setPosition(document.find('return 1').selectionEnd(), QTextCursor.MoveMode.KeepAnchor)
+        self.browser.setTextCursor(cursor)
+        mime = self.browser.createMimeDataFromSelection()
+        self.assertEqual(mime.text(), code)
+        self.assertFalse(mime.hasFormat('text/markdown'))
+        self.browser.setMarkdown('Run `print("hello")` now.')
+        self.browser.setTextCursor(self.browser.document().find('print("hello")'))
+        self.assertEqual(self.browser.createMimeDataFromSelection().text(), 'print("hello")')
+
+    def test_answer_containing_only_code_copies_plain_code(self):
+        self.browser.setMarkdown('```sh\necho hello\n```')
+        self.browser.selectAll()
+        self.assertEqual(self.browser.createMimeDataFromSelection().text(), 'echo hello')
+
     def test_plain_text_resets_previous_markdown_source(self):
         self.browser.setMarkdown('**old**')
         self.browser.setPlainText('**literal**')

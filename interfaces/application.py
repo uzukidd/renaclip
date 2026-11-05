@@ -142,15 +142,16 @@ class Runtime(QObject):
         if not was_visible:
             _, settings = load_config()
             self.chat_window.configure(normalize_openai_providers(settings), self.state.openai_reasoning_effort)
-        # Recall the same window next to the pointer, without resetting controls,
-        # selection, scroll position, size or any running request.
+        # Center the same window on the pointer without resetting its state.
+        center_offset = self.chat_window.rect().center()
+        target = position - center_offset
         if screen:
             area = screen.availableGeometry()
-            x = max(area.left(), min(position.x() + 12, area.right() - self.chat_window.width() + 1))
-            y = max(area.top(), min(position.y() + 12, area.bottom() - self.chat_window.height() + 1))
+            x = max(area.left(), min(target.x(), area.right() - self.chat_window.width() + 1))
+            y = max(area.top(), min(target.y(), area.bottom() - self.chat_window.height() + 1))
             self.chat_window.move(x, y)
         else:
-            self.chat_window.move(position)
+            self.chat_window.move(target)
         self.chat_window.show_chat()
 
     def run_skill(self, index):

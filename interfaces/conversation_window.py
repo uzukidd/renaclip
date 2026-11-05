@@ -478,7 +478,7 @@ class ConversationWindow(QWidget):
         bubble.setObjectName('userBubble' if user else 'assistantBody')
         bubble_layout = QVBoxLayout(bubble)
         bubble_layout.setContentsMargins(18, 12, 18, 12) if user else bubble_layout.setContentsMargins(0, 6, 0, 6)
-        card_layout.addWidget(bubble)
+        card_layout.addWidget(bubble, 0, Qt.AlignmentFlag.AlignRight if user else Qt.AlignmentFlag(0))
         if user and not message.get('text', '').strip():
             bubble.hide()
         browser = ChatMessageBrowser(bubble)
@@ -509,20 +509,38 @@ class ConversationWindow(QWidget):
         self._fit_browser(browser)
         return browser
 
+    def _fit_user_bubble(self, browser):
+        bubble = browser.parentWidget()
+        turn = bubble.parentWidget()
+        maximum = max(120, min(round(self.width() * 0.78), self.scroll.viewport().width() - 16))
+        turn.setMaximumWidth(maximum)
+        metrics = browser.fontMetrics()
+        natural = max((metrics.horizontalAdvance(line.expandtabs(4))
+                       for line in browser.toPlainText().split('\n')), default=0)
+        # Include bubble padding and a small allowance for QTextBrowser's frame.
+        width = max(54, min(maximum, natural + 44))
+        bubble.setFixedWidth(width)
+        browser.document().setTextWidth(max(1, width - 40))
+
     def _fit_browser(self, browser):
-        if self.disposed:
+        if self.disposed or getattr(browser, '_fitting', False):
             return
-        height = max(32, round(browser.document().size().height()) + 12)
-        if browser.height() != height:
-            browser.setFixedHeight(height)
+        browser._fitting = True
+        try:
+            if browser.objectName() == 'userMessage':
+                self._fit_user_bubble(browser)
+            height = max(32, round(browser.document().size().height()) + 12)
+            if browser.height() != height:
+                browser.setFixedHeight(height)
+        finally:
+            browser._fitting = False
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         for browser in self._browsers:
             user = browser.objectName() == 'userMessage'
-            if user:
-                browser.parentWidget().parentWidget().setMaximumWidth(max(240, round(self.width() * 0.78)))
-            browser.document().setTextWidth(max(100, self.width() * (0.78 if user else 1) - 80))
+            if not user:
+                browser.document().setTextWidth(max(100, self.width() - 80))
             self._fit_browser(browser)
 
     def show_chat(self):
