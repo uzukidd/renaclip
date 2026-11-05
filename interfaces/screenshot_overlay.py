@@ -10,7 +10,7 @@ from copy import deepcopy
 from urllib.parse import urlsplit
 
 from PySide6.QtCore import QByteArray, QBuffer, QIODevice, QPoint, QRect, QRectF, Qt, QTimer, Signal, QEvent, QThread, QUrl, QMimeData
-from PySide6.QtGui import QColor, QDesktopServices, QFont, QPainter, QPen, QPixmap, QTextDocument, QTextCursor, QTextImageFormat, QTextCharFormat, QTextOption, QRegion, QIcon
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QPainter, QPen, QPixmap, QTextDocument, QTextCursor, QTextImageFormat, QTextCharFormat, QTextOption, QRegion, QIcon, QTextFormat
 from PySide6.QtWidgets import QApplication, QLabel, QPlainTextEdit, QTextBrowser, QWidget, QVBoxLayout, QHBoxLayout, QToolButton
 
 from interfaces import theme
@@ -124,9 +124,36 @@ class AnswerBrowser(QTextBrowser):
             if formula.display and not cursor.atBlockEnd():
                 cursor.insertBlock()
 
+    def _selection_is_code(self, selection):
+        start, end = selection.selectionStart(), selection.selectionEnd()
+        block = self.document().findBlock(start)
+        found_code = False
+        while block.isValid() and block.position() < end:
+            fmt = block.blockFormat()
+            block_code = (fmt.hasProperty(QTextFormat.Property.BlockCodeFence) or
+                          fmt.hasProperty(QTextFormat.Property.BlockCodeLanguage) or
+                          block.charFormat().fontFixedPitch())
+            if block_code:
+                found_code = True
+            iterator = block.begin()
+            while not iterator.atEnd():
+                fragment = iterator.fragment()
+                if fragment.position() < end and fragment.position() + fragment.length() > start:
+                    if not block_code and not fragment.charFormat().fontFixedPitch():
+                        return False
+                    found_code = True
+                iterator += 1
+            if not block_code and block.length() == 1:
+                return False
+            block = block.next()
+        return found_code
+
     def createMimeDataFromSelection(self):
         selection = self.textCursor()
         mime = QMimeData()
+        if selection.hasSelection() and self._selection_is_code(selection):
+            mime.setText(selection.selectedText().replace('\u2029', '\n').replace('\u2028', '\n'))
+            return mime
         if self._markdown_source is None:
             mime.setText(selection.selectedText().replace('\u2029', '\n'))
             return mime

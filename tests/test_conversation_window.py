@@ -163,6 +163,25 @@ class ChatWindowTests(unittest.TestCase):
         self.window.clear_history()
         self.assertTrue(label.isVisible())
 
+    def test_user_bubble_width_tracks_text_and_wraps_long_messages(self):
+        short = self.window._add_message({'role': 'user', 'text': 'Hi'})
+        medium = self.window._add_message({'role': 'user', 'text': 'Hello there'})
+        long = self.window._add_message({'role': 'user', 'text': 'A very long question with many words. ' * 20})
+        APP.processEvents()
+        short_bubble, medium_bubble, long_bubble = [b.parentWidget() for b in (short, medium, long)]
+        self.assertLess(short_bubble.width(), medium_bubble.width())
+        self.assertLess(medium_bubble.width(), long_bubble.width())
+        self.assertLessEqual(long_bubble.width(), round(self.window.width() * 0.78))
+        self.assertGreater(long.height(), short.height())
+        for bubble in (short_bubble, medium_bubble, long_bubble):
+            turn = bubble.parentWidget()
+            self.assertEqual(bubble.geometry().right(), turn.contentsRect().right())
+        original = long_bubble.width()
+        self.window.resize(self.window.width() + 200, self.window.height())
+        APP.processEvents()
+        self.assertGreater(long_bubble.width(), original)
+        self.assertLess(short_bubble.width(), medium_bubble.width())
+
     def test_failure_and_stop_restore_draft_without_committing(self):
         callbacks = self.send('draft')
         self.window._delta(self.window.generation, 'partial')
